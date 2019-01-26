@@ -155,5 +155,5 @@ def _overload_dummy(*args, **kwds):
     )
 
 
-def overload():
+def overload(fun):
     return _overload_dummy
