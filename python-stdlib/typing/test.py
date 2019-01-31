@@ -34,3 +34,17 @@ def broadcast_message(message: str, servers: List[Server]) -> None:
 Optional[int]
 
 Union[int, float, None]
+
+
+@overload
+def process(response: None) -> None:
+    ...
+
+
+try:
+    process()
+    assert (
+        False
+    ), "Calling function defined with 'overload' decorator should result in NotImplementedError"
+except NotImplementedError:
+    pass
