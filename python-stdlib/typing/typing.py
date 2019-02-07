@@ -6,6 +6,10 @@ class _Subscriptable:
 _SubSingleton = _Subscriptable()
 
 
+def TypeVar(new_type, *types):
+    return None
+
+
 class Any:
     pass
 
@@ -139,6 +143,9 @@ class AsyncGenerator:
 
 class Type:
     pass
+
+
+AnyStr = TypeVar("AnyStr", str, bytes)
 
 
 def cast(typ, val):
