@@ -14,6 +14,9 @@ class Any:
     pass
 
 
+Text = str
+
+
 class NoReturn:
     pass
 
@@ -144,6 +147,10 @@ class AsyncGenerator:
 class Type:
     pass
 
+
+IO = _SubSingleton
+TextIO = IO[str]
+BinaryIO = IO[bytes]
 
 AnyStr = TypeVar("AnyStr", str, bytes)
 
