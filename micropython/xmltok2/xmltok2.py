@@ -29,9 +29,6 @@ class XMLTokenizer:
 
     def nextch(self):
         self.c = self.f.read(1)
-        if not self.c:
-            raise StopIteration
-        return self.c
 
     def skip_ws(self):
         while self.curch().isspace():
@@ -44,7 +41,7 @@ class XMLTokenizer:
     def getident(self):
         self.skip_ws()
         ident = ""
-        while True:
+        while self.c:
             c = self.curch()
             if not(c.isalpha() or c.isdigit() or c in "_-."):
                 break
@@ -127,7 +124,7 @@ class XMLTokenizer:
                     self.expect(">")
             else:
                 text = ""
-                while self.curch() != "<":
+                while self.c and self.c != "<":
                     text += self.getch()
                 if text:
                     res[0] = TEXT
