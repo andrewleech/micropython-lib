@@ -264,6 +264,15 @@ class DeviceConnection:
 
         await pair(self, *args, **kwargs)
 
+    def compare_database_hashes(self):
+        """
+        Returns 1 if the database doesn't match the one stored for the current device
+        The internal service-changed indication will be sent if needed by this function
+        """
+        handle = self._conn_handle
+        if handle is not None:
+            return ble.gap_compare_database_hashes(handle)
+
     def is_connected(self):
         return self._conn_handle is not None
 
