@@ -60,6 +60,8 @@ def _peripheral_irq(event, data):
         conn_handle, _, _ = data
         if connection := DeviceConnection._connected.get(conn_handle, None):
             # Tell the device_task that it should terminate.
+            if connection._event is None:
+                connection._event = asyncio.ThreadSafeFlag()
             connection._event.set()
 
 
