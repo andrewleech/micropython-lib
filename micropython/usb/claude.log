@@ -49,6 +49,30 @@ The implementation follows the core architecture established by the other USB de
 - Follows MTP container structure for commands/responses
 - Implements required MTP descriptors and endpoints
 
+## Performance Improvements with uctypes
+
+Following the initial implementation, I refactored the code to use MicroPython's `uctypes` module for more efficient data structure handling:
+
+1. **Defined structured data layouts:**
+   - Created descriptor dictionaries for all MTP structures (containers, device info, storage info, etc.)
+   - Used proper offsets and data types (UINT8, UINT16, UINT32, UINT64)
+
+2. **Direct memory access:**
+   - Eliminated all `struct.pack/unpack` calls by using `uctypes.struct` objects
+   - Directly manipulated memory through struct field assignments
+   - Reduced temporary allocations and copying
+
+3. **Memory efficiency:**
+   - Used pre-allocated buffers for repeated operations
+   - Implemented zero-copy approaches where possible
+   - Improved parameter passing with direct memory access
+
+4. **Optimized string handling:**
+   - Improved UTF-16 string handling for MTP string fields
+   - Direct byte manipulation instead of packing/unpacking
+
+These improvements align better with MicroPython's design philosophy of efficient memory use and direct hardware access, making the driver more suitable for resource-constrained environments.
+
 ## Cost and Resources
 Total cost: $0.78
 Total duration (API): 4m 43.0s
