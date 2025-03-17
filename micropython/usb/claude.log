@@ -78,3 +78,29 @@ Total cost: $0.78
 Total duration (API): 4m 43.0s
 Total duration (wall): 15m 1.9s
 Total code changes: 1172 lines added, 0 lines removed
+
+## Follow-up Implementation - Descriptor Packing Fix
+
+After the initial implementation, I fixed an issue with the `desc_cfg()` method in the MTP driver. The method was missing proper descriptor packing which is essential for USB enumeration.
+
+### Changes Made:
+1. **Fixed `desc_cfg()` method:**
+   - Added proper parameter signature (desc, itf_num, ep_num, strs)
+   - Implemented descriptor packing with `desc.pack()` for class-specific descriptors
+   - Aligned endpoint creation with other drivers
+
+2. **Updated interface control transfer handling:**
+   - Renamed `control_req()` to `on_interface_control_xfer()` for consistency
+   - Fixed parameter handling to match other drivers
+
+3. **Improved USB transfer methods:**
+   - Updated to use Interface base class methods
+   - Fixed callback parameter handling
+   - Corrected interface open state checking
+
+4. **Updated example application:**
+   - Changed to use machine.USBDevice directly
+   - Improved USB device management and cleanup
+   - Made consistent with other driver examples
+
+These changes make the MTP driver more robust and ensure it follows the same patterns as other drivers in the MicroPython USB framework. The driver now correctly provides USB descriptors needed for proper enumeration and operation on host systems.
