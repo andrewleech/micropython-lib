@@ -242,6 +242,7 @@ class _Device:
         return self._usbd.active(*optional_value)
 
     def _open_itf_cb(self, desc):
+        self.did_open = desc
         # Singleton callback from TinyUSB custom class driver, when USB host does
         # Set Configuration. Called once per interface or IAD.
 
@@ -277,8 +278,8 @@ class _Device:
         #
         # This means on_open() is only called once, and that it can
         # safely submit transfers on any of the USB interfaces' endpoints.
-        if self._itfs.get(max_itf + 1, None) != itf:
-            itf.on_open()
+        # if self._itfs.get(max_itf + 1, None) != itf:
+        itf.on_open()
 
     def _reset_cb(self):
         # Callback when the USB device is reset by the host

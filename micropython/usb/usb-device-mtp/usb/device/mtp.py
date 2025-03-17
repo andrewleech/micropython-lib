@@ -13,7 +13,7 @@ import os
 import io
 import uctypes
 
-from usb.device import Interface, Descriptor, Buffer
+from .core import Interface, Descriptor, Buffer
 import usb.device
 
 # MTP Class-specific constants
@@ -134,6 +134,11 @@ OBJECT_HANDLES_DESC = {
     "count": 0 | uctypes.UINT32,
     # Handles follow
 }
+
+_EP_IN_FLAG = const(1 << 7)
+EP_TYPE_BULK = "bulk"
+EP_TYPE_INTERRUPT = "interrupt"
+
 
 def string_to_utf16(s):
     """Convert ASCII string to UTF-16 with length prefix as required by MTP."""
@@ -305,24 +310,28 @@ class MTPInterface(Interface):
             ep_num: First endpoint number to use
             strs: String descriptor array
         """
+        # Add the interface identifier to the strings
+        iInterface = len(strs)
+        strs.append("MTP")
+
         # Store interface number
         self._itf_num = itf_num
         
         # Interface Association Descriptor for MTP
-        desc.interface_assoc(itf_num, 1, MTP_CLASS, MTP_SUBCLASS, MTP_PROTOCOL)
+        # desc.interface_assoc(itf_num, 1, MTP_CLASS, MTP_SUBCLASS, MTP_PROTOCOL)
         
-        # Interface descriptor
-        desc.interface(itf_num, 3, MTP_CLASS, MTP_SUBCLASS, MTP_PROTOCOL)
+        # Interface descriptor        
+        desc.interface(itf_num, 3, MTP_CLASS, MTP_SUBCLASS, MTP_PROTOCOL, iInterface)
         
-        # Class-specific functional descriptor
-        desc.pack(
-            "<BBBBB",
-            5,  # bFunctionLength
-            0x24,  # bDescriptorType - CS_INTERFACE
-            0x00,  # bDescriptorSubtype
-            0x01,  # bcdMTPVersion - 1.0 LSB
-            0x00,  # bcdMTPVersion - 1.0 MSB
-        )
+        # # Class-specific functional descriptor
+        # desc.pack(
+        #     "<BBBBB",
+        #     5,  # bFunctionLength
+        #     0x24,  # bDescriptorType - CS_INTERFACE
+        #     0x00,  # bDescriptorSubtype
+        #     0x01,  # bcdMTPVersion - 1.0 LSB
+        #     0x00,  # bcdMTPVersion - 1.0 MSB
+        # )
         
         # Endpoint descriptors
         # Bulk OUT endpoint
@@ -330,11 +339,11 @@ class MTPInterface(Interface):
         desc.endpoint(self._bulk_out_ep, "bulk", MTP_BULK_EP_SIZE, 0)
         
         # Bulk IN endpoint
-        self._bulk_in_ep = (ep_num + 1) | 0x80
+        self._bulk_in_ep = ep_num | _EP_IN_FLAG
         desc.endpoint(self._bulk_in_ep, "bulk", MTP_BULK_EP_SIZE, 0)
         
         # Interrupt IN endpoint for events
-        self._intr_ep = (ep_num + 2) | 0x80
+        self._intr_ep = (ep_num + 1) | _EP_IN_FLAG
         desc.endpoint(self._intr_ep, "interrupt", MTP_INTERRUPT_EP_SIZE, 10)  # 10ms interval
 
     def on_interface_control_xfer(self, stage, request):
