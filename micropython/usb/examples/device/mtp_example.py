@@ -18,7 +18,7 @@ Usage:
 
 import os
 import time
-import usb.device
+import machine
 from usb.device.mtp import MTPInterface
 
 def main():
@@ -32,16 +32,18 @@ def main():
     # Here we use '/' to expose the entire filesystem
     mtp = MTPInterface(root_dir="/")
     
-    # Initialize the MTP interface
-    mtp.init()
+    # Create a USB device using machine.USBDevice
+    usb_dev = machine.USBDevice(0xF055, 0x9802, "MicroPython", "MTP Device", "123456789")
     
-    # Initialize the USB device with the MTP interface
-    # This registers the device with USB and starts accepting connections
-    usb.device.get().init(mtp, builtin_driver=True)
+    # Add the MTP interface to the USB device
+    usb_dev.add_interface(mtp)
+    
+    # Enable the USB device
+    usb_dev.enable()
     
     # Wait for USB to be configured
     print("Waiting for USB connection...")
-    while not mtp.is_open():
+    while not usb_dev.configured():
         time.sleep(0.1)
     
     print("USB MTP device connected!")
@@ -55,6 +57,7 @@ def main():
     except KeyboardInterrupt:
         # Clean up on exit
         print("Exiting MTP example")
+        usb_dev.disable()
 
 if __name__ == "__main__":
     main()

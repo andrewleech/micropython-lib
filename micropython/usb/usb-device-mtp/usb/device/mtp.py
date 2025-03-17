@@ -162,11 +162,9 @@ class MTPInterface(Interface):
         self._bulk_in_ep = None
         self._bulk_out_ep = None
         self._intr_ep = None
-        self._bulk_in_buf = None
-        self._bulk_out_buf = None
-        self._rx_buf = None
-        self._tx_buf = None
-        self._rx_packet = None
+        self._itf_num = None
+        
+        # Create packet and container buffers
         self._container_buf = bytearray(MTP_MAX_PACKET_SIZE)
         self._container_mview = memoryview(self._container_buf)
         
@@ -193,6 +191,9 @@ class MTPInterface(Interface):
         self._transfer_offset = 0
         self._transfer_length = 0
         self._transfer_file = None
+        
+        # Initialize with default parameters
+        self.init()
 
     def init(self, packet_size=MTP_MAX_PACKET_SIZE):
         """Initialize the MTP interface with the given configuration.
@@ -200,14 +201,12 @@ class MTPInterface(Interface):
         Args:
             packet_size: Maximum packet size for bulk transfers (default: 512)
         """
-        # Create buffers
-        self._bulk_in_buf = Buffer(packet_size * 2)  # Double buffering
-        self._bulk_out_buf = Buffer(packet_size * 2)
+        # Create buffers for data transfer
         self._rx_buf = bytearray(packet_size)
         self._rx_packet = memoryview(self._rx_buf)
         self._tx_buf = bytearray(packet_size)
         
-        # Set internal state
+        # Reset internal state
         self._transaction_id = 0
         self._session_open = False
         self._handles = {}
@@ -297,56 +296,53 @@ class MTPInterface(Interface):
         except OSError:
             return None
 
-    def desc_cfg(self, desc):
+    def desc_cfg(self, desc, itf_num, ep_num, strs):
         """Build configuration descriptor.
         
         Args:
             desc: Descriptor builder object
+            itf_num: Interface number to use
+            ep_num: First endpoint number to use
+            strs: String descriptor array
         """
-        # Calculate total descriptor length
-        len_itf = 9   # Interface descriptor
-        len_eps = 7 * 3  # 3 endpoint descriptors
-        len_itf_assoc = 8  # Interface Association Descriptor
-        len_func = 5  # Functional descriptor (minimal)
+        # Store interface number
+        self._itf_num = itf_num
         
-        total_len = len_itf + len_eps + len_itf_assoc + len_func
-        
-        # Reserve space
-        itf_idx = desc.reserve(total_len)
-        self._itf_num = itf_idx
-        
-        # Build descriptor
-        # Interface Association Descriptor
-        desc.interface_assoc(
-            itf_idx, 1, MTP_CLASS, MTP_SUBCLASS, MTP_PROTOCOL, "MTP"
-        )
+        # Interface Association Descriptor for MTP
+        desc.interface_assoc(itf_num, 1, MTP_CLASS, MTP_SUBCLASS, MTP_PROTOCOL)
         
         # Interface descriptor
-        desc.interface(
-            itf_idx, 0, 3, MTP_CLASS, MTP_SUBCLASS, MTP_PROTOCOL, "MTP"
-        )
+        desc.interface(itf_num, 3, MTP_CLASS, MTP_SUBCLASS, MTP_PROTOCOL)
         
-        # Minimal functional descriptor
-        desc.add(b"\x05\x24\x00\x01\x00")  # Minimal class-specific descriptor
+        # Class-specific functional descriptor
+        desc.pack(
+            "<BBBBB",
+            5,  # bFunctionLength
+            0x24,  # bDescriptorType - CS_INTERFACE
+            0x00,  # bDescriptorSubtype
+            0x01,  # bcdMTPVersion - 1.0 LSB
+            0x00,  # bcdMTPVersion - 1.0 MSB
+        )
         
         # Endpoint descriptors
         # Bulk OUT endpoint
-        self._bulk_out_ep = usb.device.get().alloc_ep(1, usb.device.EP_TYPE_BULK, MTP_BULK_EP_SIZE)
-        desc.endpoint(self._bulk_out_ep, usb.device.EP_TYPE_BULK, MTP_BULK_EP_SIZE)
+        self._bulk_out_ep = ep_num
+        desc.endpoint(self._bulk_out_ep, "bulk", MTP_BULK_EP_SIZE, 0)
         
         # Bulk IN endpoint
-        self._bulk_in_ep = usb.device.get().alloc_ep(1, usb.device.EP_TYPE_BULK, MTP_BULK_EP_SIZE)
-        desc.endpoint(self._bulk_in_ep | 0x80, usb.device.EP_TYPE_BULK, MTP_BULK_EP_SIZE)
+        self._bulk_in_ep = (ep_num + 1) | 0x80
+        desc.endpoint(self._bulk_in_ep, "bulk", MTP_BULK_EP_SIZE, 0)
         
         # Interrupt IN endpoint for events
-        self._intr_ep = usb.device.get().alloc_ep(1, usb.device.EP_TYPE_INTERRUPT, MTP_INTERRUPT_EP_SIZE)
-        desc.endpoint(self._intr_ep | 0x80, usb.device.EP_TYPE_INTERRUPT, MTP_INTERRUPT_EP_SIZE, 10)  # 10ms interval
+        self._intr_ep = (ep_num + 2) | 0x80
+        desc.endpoint(self._intr_ep, "interrupt", MTP_INTERRUPT_EP_SIZE, 10)  # 10ms interval
 
-    def control_req(self, req, *args, **kwargs):
-        """Handle class-specific control requests.
+    def on_interface_control_xfer(self, stage, request):
+        """Handle class-specific interface control transfers.
         
         Args:
-            req: USB_SETUP_DESCRIPTOR setup packet
+            stage: Stage of the control transfer
+            request: The setup packet
             
         Returns:
             True if request was handled, False otherwise
@@ -380,27 +376,26 @@ class MTPInterface(Interface):
 
     def is_open(self):
         """Check if the device is configured and open."""
-        return usb.device.get().configured() and not self._session_open
+        return super().is_open()
 
     def _submit_out_transfer(self):
         """Submit an OUT transfer to receive data."""
-        if not usb.device.get().configured():
+        if not super().is_open():
             return
-        usb.device.get().submit_xfer(
-            self._bulk_out_ep, self._rx_packet, self._on_data_received
-        )
+        
+        self.submit_xfer(self._bulk_out_ep, self._rx_packet, self._on_data_received)
 
-    def _on_data_received(self, ep, data, status):
+    def _on_data_received(self, ep, res, num_bytes):
         """Handle received data from the USB host.
         
         Args:
             ep: Endpoint number
-            data: Received data
-            status: Transfer status
+            res: Result code (0 for success)
+            num_bytes: Number of bytes received
         """
-        if status == usb.device.XFER_COMPLETED and len(data) > 0:
+        if res == 0 and num_bytes > 0:
             # Process the received data
-            self._process_container(data)
+            self._process_container(self._rx_packet[:num_bytes])
         
         # Submit a new transfer
         self._submit_out_transfer()
@@ -411,7 +406,7 @@ class MTPInterface(Interface):
         Args:
             data: Data to send
         """
-        if not usb.device.get().configured():
+        if not super().is_open():
             return
         
         # Copy data to the transmit buffer
@@ -420,17 +415,15 @@ class MTPInterface(Interface):
         tx_view[:length] = data[:length]
         
         # Submit the transfer
-        usb.device.get().submit_xfer(
-            self._bulk_in_ep | 0x80, tx_view[:length], self._on_data_sent
-        )
+        self.submit_xfer(self._bulk_in_ep, tx_view[:length], self._on_data_sent)
 
-    def _on_data_sent(self, ep, data, status):
+    def _on_data_sent(self, ep, res, num_bytes):
         """Handle completion of data transmission.
         
         Args:
             ep: Endpoint number
-            data: Sent data
-            status: Transfer status
+            res: Result code (0 for success)
+            num_bytes: Number of bytes sent
         """
         pass  # Could be used for flow control
 
