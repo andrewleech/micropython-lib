@@ -380,6 +380,7 @@ class MTPInterface(Interface):
 
     def on_open(self):
         """Handle USB configuration event."""
+        super().on_open()
         # Submit initial OUT transfer to receive commands
         self._submit_out_transfer()
 
@@ -389,9 +390,10 @@ class MTPInterface(Interface):
 
     def _submit_out_transfer(self):
         """Submit an OUT transfer to receive data."""
-        if not super().is_open():
+        if (not super().is_open()) or self.xfer_pending(self._bulk_out_ep):
             return
         
+        print("submit_xfer")
         self.submit_xfer(self._bulk_out_ep, self._rx_packet, self._on_data_received)
 
     def _on_data_received(self, ep, res, num_bytes):
@@ -405,6 +407,8 @@ class MTPInterface(Interface):
         if res == 0 and num_bytes > 0:
             # Process the received data
             self._process_container(self._rx_packet[:num_bytes])
+        else:
+            print("_on_data_received", res, num_bytes)
         
         # Submit a new transfer
         self._submit_out_transfer()
@@ -443,6 +447,7 @@ class MTPInterface(Interface):
             data: Container data
         """
         if len(data) < 12:
+            print(f"MTP: Invalid container {data}")
             return  # Invalid container
         
         # Parse container header using uctypes
@@ -457,6 +462,8 @@ class MTPInterface(Interface):
         container_type = container.type
         code = container.code
         transaction_id = container.transaction_id
+
+        print(f"_process_container({container_type}, {length}, {code}, {transaction_id}")
         
         # Handle by container type
         if container_type == MTP_CONTAINER_TYPE_COMMAND:
