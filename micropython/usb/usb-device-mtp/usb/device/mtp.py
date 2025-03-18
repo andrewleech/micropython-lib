@@ -171,6 +171,7 @@ class MTPInterface(Interface):
         
     def desc_cfg(self, desc, itf_num, ep_num, strs):
         """Build the USB configuration descriptor for this interface."""
+        print("[MTP] Building descriptors: itf_num={}, ep_num={}".format(itf_num, ep_num))
         # Add the interface descriptor for MTP (PIMA 15740 Still Image)
         desc.interface(
             itf_num, 
@@ -186,6 +187,9 @@ class MTPInterface(Interface):
         self.ep_in = ep_num | _EP_IN_FLAG
         self.ep_intr = (ep_num + 1) | _EP_IN_FLAG
         
+        print("[MTP] Endpoints assigned: ep_out=0x{:02x}, ep_in=0x{:02x}, ep_intr=0x{:02x}".format(
+            self.ep_out, self.ep_in, self.ep_intr))
+        
         desc.endpoint(self.ep_out, "bulk", _MAX_PACKET_SIZE, 0)
         desc.endpoint(self.ep_in, "bulk", _MAX_PACKET_SIZE, 0)
         desc.endpoint(self.ep_intr, "interrupt", 8, 10)  # 10ms interval for events
@@ -196,12 +200,15 @@ class MTPInterface(Interface):
     
     def on_open(self):
         """Called when the USB host configures the device."""
+        print("[MTP] Device configured by host")
         super().on_open()
         # Start transfers for receiving commands and data
         self._rx_xfer()
+        print("[MTP] Interface ready, waiting for MTP commands")
         
     def on_reset(self):
         """Called when the USB device is reset by the host."""
+        print("[MTP] Device reset by host")
         super().on_reset()
         # Reset the session state
         self._session_open = False
@@ -214,34 +221,62 @@ class MTPInterface(Interface):
         self._send_object_handle = None
         self._send_object_info = None
         self._get_object_handle = None
+        print("[MTP] Session state cleared")
     
     def _rx_xfer(self):
         """Submit a new transfer to receive data from the host."""
         if self.is_open() and not self.xfer_pending(self.ep_out) and self._rx.writable():
-            self.submit_xfer(self.ep_out, self._rx.pend_write(), self._rx_cb)
+            buf = self._rx.pend_write()
+            print("[MTP] Submitting OUT transfer, buffer size={}".format(len(buf)))
+            self.submit_xfer(self.ep_out, buf, self._rx_cb)
+        else:
+            if not self.is_open():
+                print("[MTP] Cannot submit OUT transfer - interface not open")
+            elif self.xfer_pending(self.ep_out):
+                print("[MTP] Cannot submit OUT transfer - transfer already pending")
+            elif not self._rx.writable():
+                print("[MTP] Cannot submit OUT transfer - RX buffer full ({} bytes)".format(self._rx.readable()))
     
     def _rx_cb(self, ep, res, num_bytes):
         """Callback when data is received from the host."""
+        print("[MTP] OUT transfer complete: res={}, bytes={}".format(res, num_bytes))
         if res == 0:
             self._rx.finish_write(num_bytes)
+            print("[MTP] Scheduling data processing")
             schedule(self._process_rx, None)
+        else:
+            print("[MTP] OUT transfer failed with error {}".format(res))
         self._rx_xfer()  # Continue receiving
     
     def _tx_xfer(self):
         """Submit a new transfer to send data to the host."""
         if self.is_open() and not self.xfer_pending(self.ep_in) and self._tx.readable():
-            self.submit_xfer(self.ep_in, self._tx.pend_read(), self._tx_cb)
+            buf = self._tx.pend_read()
+            print("[MTP] Submitting IN transfer, data size={}".format(len(buf)))
+            self.submit_xfer(self.ep_in, buf, self._tx_cb)
+        else:
+            if not self.is_open():
+                print("[MTP] Cannot submit IN transfer - interface not open")
+            elif self.xfer_pending(self.ep_in):
+                print("[MTP] Cannot submit IN transfer - transfer already pending")
+            elif not self._tx.readable():
+                print("[MTP] Cannot submit IN transfer - no data in TX buffer")
     
     def _tx_cb(self, ep, res, num_bytes):
         """Callback when data has been sent to the host."""
+        print("[MTP] IN transfer complete: res={}, bytes={}".format(res, num_bytes))
         if res == 0:
             self._tx.finish_read(num_bytes)
+        else:
+            print("[MTP] IN transfer failed with error {}".format(res))
         self._tx_xfer()  # Send more data if available
     
     def _process_rx(self, _):
         """Process received data from the host."""
         # Check if there's enough data for a container header
-        if self._rx.readable() < _CONTAINER_HEADER_SIZE:
+        readable = self._rx.readable()
+        if readable < _CONTAINER_HEADER_SIZE:
+            print("[MTP] Not enough data for container header ({} bytes)".format(readable))
             return
         
         # Peek at the container header without consuming it yet
@@ -253,8 +288,20 @@ class MTPInterface(Interface):
         code = struct.unpack_from("<H", header, 6)[0]
         transaction_id = struct.unpack_from("<I", header, 8)[0]
         
+        container_types = {
+            _MTP_CONTAINER_TYPE_COMMAND: "COMMAND",
+            _MTP_CONTAINER_TYPE_DATA: "DATA",
+            _MTP_CONTAINER_TYPE_RESPONSE: "RESPONSE",
+            _MTP_CONTAINER_TYPE_EVENT: "EVENT"
+        }
+        
+        container_type_str = container_types.get(container_type, "UNKNOWN")
+        print("[MTP] Container header: length={}, type={}, code=0x{:04x}, transaction_id={}".format(
+            length, container_type_str, code, transaction_id))
+        
         # Ensure we have the complete container
         if self._rx.readable() < length:
+            print("[MTP] Waiting for complete container ({}/{} bytes)".format(self._rx.readable(), length))
             return
         
         # Now consume the container header
@@ -272,6 +319,25 @@ class MTPInterface(Interface):
                     params.append(param)
                     self._rx.finish_read(4)
             
+            # Map code to operation name for common operations
+            operation_names = {
+                _MTP_OPERATION_GET_DEVICE_INFO: "GetDeviceInfo",
+                _MTP_OPERATION_OPEN_SESSION: "OpenSession",
+                _MTP_OPERATION_CLOSE_SESSION: "CloseSession",
+                _MTP_OPERATION_GET_STORAGE_IDS: "GetStorageIDs",
+                _MTP_OPERATION_GET_STORAGE_INFO: "GetStorageInfo",
+                _MTP_OPERATION_GET_NUM_OBJECTS: "GetNumObjects",
+                _MTP_OPERATION_GET_OBJECT_HANDLES: "GetObjectHandles",
+                _MTP_OPERATION_GET_OBJECT_INFO: "GetObjectInfo",
+                _MTP_OPERATION_GET_OBJECT: "GetObject",
+                _MTP_OPERATION_DELETE_OBJECT: "DeleteObject",
+                _MTP_OPERATION_SEND_OBJECT_INFO: "SendObjectInfo",
+                _MTP_OPERATION_SEND_OBJECT: "SendObject"
+            }
+            
+            op_name = operation_names.get(code, "Unknown")
+            print("[MTP] Received command: {} (0x{:04x}), params={}".format(op_name, code, params))
+            
             # Store operation info for processing
             self._current_operation = code
             self._current_params = params
@@ -285,11 +351,15 @@ class MTPInterface(Interface):
         elif container_type == _MTP_CONTAINER_TYPE_DATA:
             if not self._current_operation or self._data_phase_complete:
                 # Unexpected data phase
+                print("[MTP] Unexpected data phase, no operation in progress")
                 self._send_response(_MTP_RESPONSE_GENERAL_ERROR)
                 return
             
             # Process the data phase
             data_size = length - _CONTAINER_HEADER_SIZE
+            print("[MTP] Data phase: size={} bytes for operation 0x{:04x}".format(
+                data_size, self._current_operation))
+            
             if self._rx.readable() >= data_size:
                 data = bytearray(data_size)
                 view = memoryview(data)
@@ -304,10 +374,12 @@ class MTPInterface(Interface):
                     position += chunk
                     remaining -= chunk
                 
+                print("[MTP] Data phase complete, processing {} bytes".format(data_size))
                 self._process_data_phase(data)
             else:
                 # Not enough data received
                 # Skip incomplete data
+                print("[MTP] Incomplete data received, skipping")
                 self._rx.finish_read(self._rx.readable())
                 self._send_response(_MTP_RESPONSE_INCOMPLETE_TRANSFER)
     
@@ -318,8 +390,27 @@ class MTPInterface(Interface):
         
         # Check if session is open (required for most operations)
         if not self._session_open and op != _MTP_OPERATION_OPEN_SESSION and op != _MTP_OPERATION_GET_DEVICE_INFO:
+            print("[MTP] Rejecting command 0x{:04x} - session not open".format(op))
             self._send_response(_MTP_RESPONSE_SESSION_NOT_OPEN)
             return
+        
+        # Map the operation code to a name for better debug messages
+        operation_names = {
+            _MTP_OPERATION_GET_DEVICE_INFO: "GetDeviceInfo",
+            _MTP_OPERATION_OPEN_SESSION: "OpenSession",
+            _MTP_OPERATION_CLOSE_SESSION: "CloseSession",
+            _MTP_OPERATION_GET_STORAGE_IDS: "GetStorageIDs",
+            _MTP_OPERATION_GET_STORAGE_INFO: "GetStorageInfo",
+            _MTP_OPERATION_GET_NUM_OBJECTS: "GetNumObjects",
+            _MTP_OPERATION_GET_OBJECT_HANDLES: "GetObjectHandles",
+            _MTP_OPERATION_GET_OBJECT_INFO: "GetObjectInfo",
+            _MTP_OPERATION_GET_OBJECT: "GetObject",
+            _MTP_OPERATION_DELETE_OBJECT: "DeleteObject",
+            _MTP_OPERATION_SEND_OBJECT_INFO: "SendObjectInfo",
+            _MTP_OPERATION_SEND_OBJECT: "SendObject"
+        }
+        op_name = operation_names.get(op, "Unknown")
+        print("[MTP] Processing command: {} (0x{:04x})".format(op_name, op))
         
         # Handle operations
         if op == _MTP_OPERATION_GET_DEVICE_INFO:
@@ -348,6 +439,7 @@ class MTPInterface(Interface):
             self._cmd_send_object()
         else:
             # Operation not supported
+            print("[MTP] Unsupported operation: 0x{:04x}".format(op))
             self._send_response(_MTP_RESPONSE_OPERATION_NOT_SUPPORTED)
     
     def _process_data_phase(self, data):
@@ -465,24 +557,34 @@ class MTPInterface(Interface):
     def _cmd_open_session(self, params):
         """Handle OpenSession command."""
         if not params:
+            print("[MTP] OpenSession: No parameters provided")
             self._send_response(_MTP_RESPONSE_INVALID_PARAMETER)
             return
             
         session_id = params[0]
+        print("[MTP] OpenSession: Requested session_id={}".format(session_id))
         
         if session_id == 0:
+            print("[MTP] OpenSession: Rejecting invalid session ID (0)")
             self._send_response(_MTP_RESPONSE_INVALID_PARAMETER)
         elif self._session_open:
+            print("[MTP] OpenSession: Session already open (id={})".format(self._session_id))
             self._send_response(_MTP_RESPONSE_SESSION_ALREADY_OPEN)
         else:
+            print("[MTP] OpenSession: Opening new session with id={}".format(session_id))
             self._session_open = True
             self._session_id = session_id
-            self._send_response(_MTP_RESPONSE_OK)
+            
             # Refresh the object list when opening a session
+            print("[MTP] OpenSession: Refreshing object list")
             self._refresh_object_list()
+            print("[MTP] OpenSession: Found {} objects".format(len(self._object_handles)))
+            
+            self._send_response(_MTP_RESPONSE_OK)
     
     def _cmd_close_session(self):
         """Handle CloseSession command."""
+        print("[MTP] CloseSession: Closing session {}".format(self._session_id))
         self._session_open = False
         self._session_id = 0
         self._send_response(_MTP_RESPONSE_OK)
@@ -955,6 +1057,7 @@ class MTPInterface(Interface):
     def _send_data(self, data, final=True):
         """Send data phase of an MTP transaction."""
         if not self.is_open():
+            print("[MTP] Cannot send data - interface not open")
             return False
             
         # Create container header
@@ -967,11 +1070,21 @@ class MTPInterface(Interface):
                          self._current_operation,      # Operation code
                          self._transaction_id)         # Transaction ID
         
+        print("[MTP] Sending DATA container: length={}, operation=0x{:04x}, transaction_id={}{}".format(
+            total_len, self._current_operation, self._transaction_id, 
+            ", final=True" if final else ""))
+        
         # Send header
         self._tx.write(container)
         
         # Send data
         if data:
+            if len(data) > 64:
+                print("[MTP] Data payload: {} bytes (first 64 bytes: {})".format(
+                    len(data), [hex(b) for b in data[:64]]))
+            else:
+                print("[MTP] Data payload: {} bytes: {}".format(
+                    len(data), [hex(b) for b in data]))
             self._tx.write(data)
             
         # Start transfer
@@ -982,11 +1095,37 @@ class MTPInterface(Interface):
     def _send_response(self, response_code, params=None):
         """Send response phase of an MTP transaction."""
         if not self.is_open():
+            print("[MTP] Cannot send response - interface not open")
             return False
+        
+        # Map response code to string for better debug messages
+        response_names = {
+            _MTP_RESPONSE_OK: "OK",
+            _MTP_RESPONSE_GENERAL_ERROR: "GeneralError",
+            _MTP_RESPONSE_SESSION_NOT_OPEN: "SessionNotOpen",
+            _MTP_RESPONSE_INVALID_TRANSACTION_ID: "InvalidTransactionID",
+            _MTP_RESPONSE_OPERATION_NOT_SUPPORTED: "OperationNotSupported",
+            _MTP_RESPONSE_PARAMETER_NOT_SUPPORTED: "ParameterNotSupported",
+            _MTP_RESPONSE_INCOMPLETE_TRANSFER: "IncompleteTransfer",
+            _MTP_RESPONSE_INVALID_STORAGE_ID: "InvalidStorageID",
+            _MTP_RESPONSE_INVALID_OBJECT_HANDLE: "InvalidObjectHandle",
+            _MTP_RESPONSE_STORE_FULL: "StoreFull",
+            _MTP_RESPONSE_STORE_READ_ONLY: "StoreReadOnly",
+            _MTP_RESPONSE_PARTIAL_DELETION: "PartialDeletion",
+            _MTP_RESPONSE_STORE_NOT_AVAILABLE: "StoreNotAvailable",
+            _MTP_RESPONSE_SPECIFICATION_BY_FORMAT_UNSUPPORTED: "SpecificationByFormatUnsupported",
+            _MTP_RESPONSE_INVALID_PARENT_OBJECT: "InvalidParentObject",
+            _MTP_RESPONSE_INVALID_PARAMETER: "InvalidParameter",
+            _MTP_RESPONSE_SESSION_ALREADY_OPEN: "SessionAlreadyOpen"
+        }
+        response_name = response_names.get(response_code, "Unknown")
             
         # Calculate response length
         param_count = len(params) if params else 0
         total_len = _CONTAINER_HEADER_SIZE + param_count * 4
+        
+        print("[MTP] Sending RESPONSE: {} (0x{:04x}), transaction_id={}, params={}".format(
+            response_name, response_code, self._transaction_id, params if params else "None"))
         
         # Create and fill container header
         container = bytearray(total_len)
@@ -1015,6 +1154,8 @@ class MTPInterface(Interface):
     
     def _refresh_object_list(self):
         """Scan the filesystem and rebuild the object handle mapping."""
+        print("[MTP] Refreshing object list from storage path: {}".format(self._storage_path))
+        
         # Reset object handles
         self._object_handles = {}
         self._parent_map = {}
@@ -1025,9 +1166,12 @@ class MTPInterface(Interface):
         self._next_object_handle += 1
         self._object_handles[root_handle] = self._storage_path
         self._parent_map[root_handle] = 0  # No parent
+        print("[MTP] Added root directory with handle {}".format(root_handle))
         
         # Walk the directory tree
         self._scan_directory(self._storage_path, root_handle)
+        
+        print("[MTP] Object scan complete, found {} objects".format(len(self._object_handles)))
     
     def _scan_directory(self, path, parent_handle):
         """Recursively scan a directory and add objects to handle maps."""
@@ -1038,6 +1182,7 @@ class MTPInterface(Interface):
                 
             # List all entries in this directory
             entries = os.listdir(path)
+            print("[MTP] Scanning directory: {}, found {} entries".format(path, len(entries)))
             
             for entry in entries:
                 full_path = path + entry
@@ -1055,15 +1200,19 @@ class MTPInterface(Interface):
                     self._object_handles[handle] = full_path
                     self._parent_map[handle] = parent_handle
                     
+                    entry_type = "directory" if is_dir else "file"
+                    print("[MTP] Added {} '{}' with handle {}".format(entry_type, full_path, handle))
+                    
                     # Recursively scan subdirectories
                     if is_dir:
                         self._scan_directory(full_path, handle)
-                except:
+                except Exception as e:
                     # Skip entries that cause errors
+                    print("[MTP] Error scanning entry '{}': {}".format(full_path, str(e)))
                     continue
-        except:
-            # Ignore errors during directory scan
-            pass
+        except Exception as e:
+            # Log errors during directory scan
+            print("[MTP] Error scanning directory '{}': {}".format(path, str(e)))
     
     def _get_format_by_path(self, path):
         """Determine MTP format code based on file extension."""
