@@ -114,7 +114,8 @@ _MTP_STORAGE_READ_ONLY_WITHOUT_DELETE = const(0x0001)
 _MTP_STORAGE_READ_ONLY_WITH_DELETE = const(0x0002)
 
 # Maximum sizes and buffers
-_MAX_PACKET_SIZE = const(512)
+# _MAX_PACKET_SIZE = const(512)
+_MAX_PACKET_SIZE = const(64)
 _DEFAULT_TX_BUF_SIZE = const(4096)
 _DEFAULT_RX_BUF_SIZE = const(4096)
 _CONTAINER_HEADER_SIZE = const(12)
@@ -172,6 +173,9 @@ class MTPInterface(Interface):
     def desc_cfg(self, desc, itf_num, ep_num, strs):
         """Build the USB configuration descriptor for this interface."""
         print("[MTP] Building descriptors: itf_num={}, ep_num={}".format(itf_num, ep_num))
+        i_interface = len(strs)
+        strs.append("MTP")
+
         # Add the interface descriptor for MTP (PIMA 15740 Still Image)
         desc.interface(
             itf_num, 
@@ -179,7 +183,7 @@ class MTPInterface(Interface):
             _INTERFACE_CLASS_STILL_IMAGE,
             _INTERFACE_SUBCLASS_STILL_IMAGE,
             _INTERFACE_PROTOCOL_PIMA_15740,
-            0,  # No string descriptor
+            i_interface,
         )
         
         # Add the endpoints (bulk OUT, bulk IN, interrupt IN)
@@ -196,7 +200,7 @@ class MTPInterface(Interface):
     
     def num_eps(self):
         """Return the number of endpoints used by this interface."""
-        return 2  # We use 2 endpoint numbers (3 endpoints total with IN flag)
+        return 3  # We use 2 endpoint numbers (3 endpoints total with IN flag)
     
     def on_open(self):
         """Called when the USB host configures the device."""
