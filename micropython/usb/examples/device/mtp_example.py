@@ -24,7 +24,8 @@ from usb.device.mtp import MTPInterface
 import time
 
 # Create an MTP interface that exposes the root directory
-mtp = MTPInterface(storage_path="/")
+# Set debug=True to enable detailed logging
+mtp = MTPInterface(storage_path="/", debug=True)
 
 # Initialize the USB device with the MTP interface
 # Keep builtin_driver=True to maintain the serial REPL alongside MTP
