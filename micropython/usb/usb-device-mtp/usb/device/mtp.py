@@ -461,6 +461,8 @@ class MTPInterface(Interface):
     
     def _cmd_get_device_info(self):
         """Handle GetDeviceInfo command."""
+        print("[MTP] Generating device info response")
+        
         # Prepare the device info dataset
         data = bytearray(512)  # Pre-allocate buffer
         offset = 0
@@ -470,15 +472,22 @@ class MTPInterface(Interface):
         offset += 2
         
         # MTP vendor extension ID
-        struct.pack_into("<I", data, offset, 0x00000000)  # No vendor extension
+        # Use Microsoft's extension ID to better identify as a true MTP device
+        struct.pack_into("<I", data, offset, 0x00000006)  # Microsoft MTP Extension
         offset += 4
         
         # MTP version
         struct.pack_into("<H", data, offset, 100)  # Version 1.00
         offset += 2
         
-        # MTP extensions (empty string)
-        struct.pack_into("<H", data, offset, 0)  # No extension string
+        # MTP extensions description string
+        ext_string = "microsoft.com: 1.0"  # Standard Microsoft extension string
+        struct.pack_into("<H", data, offset, len(ext_string) + 1)  # String length including null terminator
+        offset += 2
+        for c in ext_string:
+            struct.pack_into("<H", data, offset, ord(c))
+            offset += 2
+        struct.pack_into("<H", data, offset, 0)  # Null terminator
         offset += 2
         
         # Functional mode
@@ -530,12 +539,18 @@ class MTPInterface(Interface):
             struct.pack_into("<H", data, offset, fmt)
             offset += 2
         
-        # Manufacturer (empty string)
-        struct.pack_into("<H", data, offset, 0)
+        # Manufacturer
+        manufacturer = "MicroPython"
+        struct.pack_into("<H", data, offset, len(manufacturer) + 1)
+        offset += 2
+        for c in manufacturer:
+            struct.pack_into("<H", data, offset, ord(c))
+            offset += 2
+        struct.pack_into("<H", data, offset, 0)  # Null terminator
         offset += 2
         
-        # Model (MicroPython)
-        model = "MicroPython"
+        # Model
+        model = "MicroPython MTP Device"
         struct.pack_into("<H", data, offset, len(model) + 1)
         offset += 2
         for c in model:
@@ -544,12 +559,24 @@ class MTPInterface(Interface):
         struct.pack_into("<H", data, offset, 0)  # Null terminator
         offset += 2
         
-        # Device version (empty string)
-        struct.pack_into("<H", data, offset, 0)
+        # Device version
+        version = "1.0"
+        struct.pack_into("<H", data, offset, len(version) + 1)
+        offset += 2
+        for c in version:
+            struct.pack_into("<H", data, offset, ord(c))
+            offset += 2
+        struct.pack_into("<H", data, offset, 0)  # Null terminator
         offset += 2
         
-        # Serial number (empty string)
-        struct.pack_into("<H", data, offset, 0)
+        # Serial number
+        serial = "MP12345"  # Generic serial number
+        struct.pack_into("<H", data, offset, len(serial) + 1)
+        offset += 2
+        for c in serial:
+            struct.pack_into("<H", data, offset, ord(c))
+            offset += 2
+        struct.pack_into("<H", data, offset, 0)  # Null terminator
         offset += 2
         
         # Send the device info
@@ -603,7 +630,10 @@ class MTPInterface(Interface):
     
     def _cmd_get_storage_info(self, params):
         """Handle GetStorageInfo command."""
+        print("[MTP] Generating storage info for storage ID: 0x{:08x}".format(params[0] if params else 0))
+        
         if not params or params[0] != self._storage_id:
+            print("[MTP] Invalid storage ID requested: 0x{:08x}".format(params[0] if params else 0))
             self._send_response(_MTP_RESPONSE_INVALID_STORAGE_ID)
             return
             
@@ -612,8 +642,10 @@ class MTPInterface(Interface):
             fs_stat = os.statvfs(self._storage_path)
             free_bytes = fs_stat[0] * fs_stat[4]  # f_bsize * f_bavail
             total_bytes = fs_stat[0] * fs_stat[2]  # f_bsize * f_blocks
-        except:
+            print("[MTP] Storage stats: total={} bytes, free={} bytes".format(total_bytes, free_bytes))
+        except Exception as e:
             # If we can't get stats, just return reasonable defaults
+            print("[MTP] Error getting storage stats: {}".format(str(e)))
             free_bytes = 1024 * 1024  # 1MB
             total_bytes = 4 * 1024 * 1024  # 4MB
         
@@ -645,12 +677,18 @@ class MTPInterface(Interface):
         struct.pack_into("<I", data, offset, 0xFFFFFFFF)
         offset += 4
         
-        # Storage description (empty)
-        struct.pack_into("<H", data, offset, 0)
+        # Storage description
+        desc = "MicroPython Flash Storage"
+        struct.pack_into("<H", data, offset, len(desc) + 1)
+        offset += 2
+        for c in desc:
+            struct.pack_into("<H", data, offset, ord(c))
+            offset += 2
+        struct.pack_into("<H", data, offset, 0)  # Null terminator
         offset += 2
         
         # Volume identifier (root)
-        volume_id = "MicroPython"
+        volume_id = "MicroPython Storage"
         struct.pack_into("<H", data, offset, len(volume_id) + 1)
         offset += 2
         for c in volume_id:
