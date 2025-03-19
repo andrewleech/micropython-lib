@@ -135,6 +135,16 @@ USB MIDI devices in MicroPython.
 The example [midi_example.py](examples/device/midi_example.py) demonstrates how
 to create a simple MIDI device to send MIDI data to and from the USB host.
 
+### Package usb-device-mtp
+
+This package provides the `usb.device.mtp` module, which implements the Media Transfer
+Protocol (MTP) to expose MicroPython's filesystem to host computers.
+
+The example [mtp_example.py](examples/device/mtp_example.py) demonstrates how to
+create an MTP device interface that allows browsing and transferring files to/from 
+the MicroPython filesystem using standard file managers on Windows, macOS, and Linux
+without requiring special drivers.
+
 ### Limitations
 
 #### Buffer thread safety
