@@ -39,11 +39,11 @@ while not mtp.is_open():
 
 print("MTP interface is now available to the host.")
 print("Your MicroPython filesystem should be accessible on the host computer.")
-print("Press Ctrl+C to exit.")
+# print("Press Ctrl+C to exit.")
 
 # Keep the script running
-try:
-    while True:
-        time.sleep(1)
-except KeyboardInterrupt:
-    print("MTP example terminated by user.")
+# try:
+#     while True:
+#         time.sleep(1)
+# except KeyboardInterrupt:
+#     print("MTP example terminated by user.")

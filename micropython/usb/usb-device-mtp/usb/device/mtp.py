@@ -139,6 +139,8 @@ _MTP_DEVICE_INFO_DESC = {
 }
 
 # Storage IDs struct
+_MTP_STORAGE_ID = const(0x00010001)
+
 _MTP_STORAGE_IDS_DESC = {
     "count": 0 | uctypes.UINT32,
     "storage_ids": (4 | uctypes.ARRAY, 1 | uctypes.UINT32)  # Variable length array
@@ -199,7 +201,7 @@ class MTPInterface(Interface):
         
         # Filesystem attributes
         self._storage_path = storage_path
-        self._storage_id = 0x00010001  # Fixed ID for the single storage we support
+        self._storage_id = _MTP_STORAGE_ID  # Fixed ID for the single storage we support
         self._next_object_handle = 0x00000001  # Start object handles at 1
         self._object_handles = {}  # Maps object handles to file paths
         self._parent_map = {}  # Maps handles to parent handles
@@ -226,6 +228,8 @@ class MTPInterface(Interface):
     def desc_cfg(self, desc, itf_num, ep_num, strs):
         """Build the USB configuration descriptor for this interface."""
         self._log("Building descriptors: itf_num={}, ep_num={}", itf_num, ep_num)
+
+        # Add the interface identifier to the strings
         i_interface = len(strs)
         strs.append("MTP")
 
@@ -535,22 +539,24 @@ class MTPInterface(Interface):
         # Handle variable-length data after the fixed struct
         offset = 8  # Start after the fixed part of the struct
         
+
         # MTP extensions description string - Microsoft extension
         # MTP extension strings are ASCII strings in PIMA format (8-bit length + 8-bit chars with null terminator)
-        ext_string = "microsoft.com: 1.0"  # Standard Microsoft extension string
+        offset += self._write_mtp_string(data, offset, "microsoft.com: 1.0")
+        # ext_string = "microsoft.com: 1.0"  # Standard Microsoft extension string
         
-        # String length (8-bit, including null terminator)
-        data[offset] = len(ext_string) + 1
-        offset += 1
+        # # String length (8-bit, including null terminator)
+        # data[offset] = len(ext_string) * 2 + 1
+        # offset += 1
         
-        # String data as ASCII
-        for c in ext_string:
-            data[offset] = ord(c)
-            offset += 1
+        # # String data as ASCII
+        # for c in ext_string:
+        #     data[offset] = ord(c)
+        #     offset += 1
         
-        # ASCII null terminator
-        data[offset] = 0
-        offset += 1
+        # # ASCII null terminator
+        # data[offset] = 0
+        # offset += 1
         
         # Functional mode
         struct.pack_into("<H", data, offset, 0)  # Standard mode
@@ -573,8 +579,8 @@ class MTPInterface(Interface):
         ]
         
         # Number of operations
-        struct.pack_into("<H", data, offset, len(operations))
-        offset += 2
+        struct.pack_into("<I", data, offset, len(operations))
+        offset += 4
         
         # List of operation codes
         for op in operations:
@@ -582,16 +588,16 @@ class MTPInterface(Interface):
             offset += 2
             
         # Supported events (array of event codes) - empty for now
-        struct.pack_into("<H", data, offset, 0)  # No events supported
-        offset += 2
+        struct.pack_into("<I", data, offset, 0)  # No events supported
+        offset += 4
         
         # Supported device properties - empty for now
-        struct.pack_into("<H", data, offset, 0)  # No device properties
-        offset += 2
+        struct.pack_into("<I", data, offset, 0)  # No device properties
+        offset += 4
         
         # Supported capture formats - empty for now
-        struct.pack_into("<H", data, offset, 0)  # No capture formats
-        offset += 2
+        struct.pack_into("<I", data, offset, 0)  # No capture formats
+        offset += 4
         
         # Supported playback formats (file formats we support)
         formats = [
@@ -601,8 +607,8 @@ class MTPInterface(Interface):
         ]
         
         # Number of formats
-        struct.pack_into("<H", data, offset, len(formats))
-        offset += 2
+        struct.pack_into("<I", data, offset, len(formats))
+        offset += 4
         
         # List of format codes
         for fmt in formats:
@@ -710,7 +716,7 @@ class MTPInterface(Interface):
         storage_info = uctypes.struct(uctypes.addressof(data), _MTP_STORAGE_INFO_DESC, uctypes.LITTLE_ENDIAN)
         
         # Fill in the fixed fields
-        storage_info.storage_type = _MTP_STORAGE_FIXED_RAM
+        storage_info.storage_type = _MTP_STORAGE_FIXED_MEDIA
         storage_info.filesystem_type = 0x0002  # Generic hierarchical
         storage_info.access_capability = _MTP_STORAGE_READ_WRITE  # Read-write access
         storage_info.max_capacity = total_bytes
@@ -765,13 +771,18 @@ class MTPInterface(Interface):
         parent_handle = params[2] if len(params) > 2 else 0
         
         if storage_id != 0xFFFFFFFF and storage_id != self._storage_id:
+            self._log("Error invalid storage id: {}", storage_id)
             self._send_response(_MTP_RESPONSE_INVALID_STORAGE_ID)
             return
             
         # Collect filtered handles
         handles = []
+        self._log("get handles: {} {} {}", storage_id, format_code, parent_handle)
+        self._log("handles: {}", self._object_handles)
+        self._log("parent: {}", self._parent_map)
+
         for handle, parent in self._parent_map.items():
-            if (parent_handle == 0 or parent == parent_handle) and handle in self._object_handles:
+            if (parent_handle in (0, 0xFFFFFFFF) or parent == parent_handle) and handle in self._object_handles:
                 # Apply format filter if specified
                 if format_code == 0 or self._get_format_by_path(self._object_handles[handle]) == format_code:
                     handles.append(handle)
@@ -830,7 +841,7 @@ class MTPInterface(Interface):
         # Get filename (basename of the path)
         parts = filepath.split('/')
         filename = parts[-1] if parts[-1] else parts[-2]  # Handle trailing slash for dirs
-        
+        self._log('***** filename {}', filename)
         # Prepare object info dataset
         data = bytearray(256)
         offset = 0
@@ -847,9 +858,9 @@ class MTPInterface(Interface):
         struct.pack_into("<H", data, offset, 0)
         offset += 2
         
-        # Object size (in bytes)
-        struct.pack_into("<I", data, offset, filesize)
-        offset += 4
+        # # Object size (in bytes)
+        # struct.pack_into("<I", data, offset, filesize)
+        # offset += 4
         
         # Object compressed size (same as size)
         struct.pack_into("<I", data, offset, filesize)
@@ -1385,12 +1396,14 @@ class MTPInterface(Interface):
         """
         if not string:
             # Empty string - just write a 0 length
-            struct.pack_into("<H", buffer, offset, 0)
-            return 2
+            struct.pack_into("<B", buffer, offset, 0)
+            return 1
             
-        # String length in 16-bit characters (including null terminator)
-        struct.pack_into("<H", buffer, offset, len(string) + 1)
-        offset += 2
+        start = offset
+        
+        # String length in 8-bit characters (including null terminator)
+        struct.pack_into("<B", buffer, offset, len(string) + 1)
+        offset += 1
         
         # String data (each character as 16-bit Unicode)
         # Use little-endian UTF-16 encoding with BOM (Byte Order Mark)
@@ -1404,7 +1417,7 @@ class MTPInterface(Interface):
         offset += 2
         
         # Return total bytes written
-        return 2 + (len(string) + 1) * 2
+        return offset - start # 2 + (len(string) + 1) * 2
     
     def _format_timestamp(self, timestamp):
         """Format a timestamp into MTP date string format."""
