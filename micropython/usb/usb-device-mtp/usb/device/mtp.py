@@ -6,6 +6,7 @@ import time
 import os
 import io
 import errno
+import uctypes
 
 from .core import Interface, Buffer, split_bmRequestType
 
@@ -119,6 +120,46 @@ _MAX_PACKET_SIZE = const(64)
 _DEFAULT_TX_BUF_SIZE = const(4096)
 _DEFAULT_RX_BUF_SIZE = const(4096)
 _CONTAINER_HEADER_SIZE = const(12)
+
+# MTP struct definitions using uctypes
+# Container header struct
+_MTP_CONTAINER_HEADER_DESC = {
+    "length": (0, uctypes.UINT32),
+    "type": (4, uctypes.UINT16),
+    "code": (6, uctypes.UINT16),
+    "transaction_id": (8, uctypes.UINT32)
+}
+
+# Device Info struct
+_MTP_DEVICE_INFO_DESC = {
+    "standard_version": (0, uctypes.UINT16),
+    "vendor_extension_id": (2, uctypes.UINT32),
+    "mtp_version": (6, uctypes.UINT16),
+    # Variable length data follows: extension string, operations, events, etc.
+}
+
+# Storage IDs struct
+_MTP_STORAGE_IDS_DESC = {
+    "count": (0, uctypes.UINT32),
+    "storage_ids": (4, uctypes.ARRAY, 1, uctypes.UINT32)  # Variable length array
+}
+
+# Storage Info struct
+_MTP_STORAGE_INFO_DESC = {
+    "storage_type": (0, uctypes.UINT16),
+    "filesystem_type": (2, uctypes.UINT16),
+    "access_capability": (4, uctypes.UINT16),
+    "max_capacity": (6, uctypes.UINT64),
+    "free_space": (14, uctypes.UINT64),
+    "free_space_objects": (22, uctypes.UINT32)
+    # Variable length data follows: storage_description, volume_identifier
+}
+
+# Object Handles struct
+_MTP_OBJECT_HANDLES_DESC = {
+    "count": (0, uctypes.UINT32),
+    "handles": (4, uctypes.ARRAY, 1, uctypes.UINT32)  # Variable length array
+}
 
 
 class MTPInterface(Interface):
@@ -298,11 +339,15 @@ class MTPInterface(Interface):
         # Peek at the container header without consuming it yet
         header = self._rx.pend_read()
         
-        # Parse container header
-        length = struct.unpack_from("<I", header, 0)[0]
-        container_type = struct.unpack_from("<H", header, 4)[0]
-        code = struct.unpack_from("<H", header, 6)[0]
-        transaction_id = struct.unpack_from("<I", header, 8)[0]
+        # Parse container header using uctypes
+        # Create a container header struct over the header buffer
+        hdr = uctypes.struct(uctypes.addressof(header), _MTP_CONTAINER_HEADER_DESC, uctypes.LITTLE_ENDIAN)
+        
+        # Extract values from the struct
+        length = hdr.length
+        container_type = hdr.type
+        code = hdr.code
+        transaction_id = hdr.transaction_id
         
         container_types = {
             _MTP_CONTAINER_TYPE_COMMAND: "COMMAND",
@@ -476,38 +521,35 @@ class MTPInterface(Interface):
         """Handle GetDeviceInfo command."""
         self._log("Generating device info response")
         
-        # Prepare the device info dataset
-        data = bytearray(512)  # Pre-allocate buffer
-        offset = 0
+        # Allocate a buffer for device info
+        data = bytearray(512)  # Pre-allocate buffer - device info has variable length
         
-        # Standard version
-        struct.pack_into("<H", data, offset, 100)  # Version 1.00
-        offset += 2
+        # Create a device info struct
+        dev_info = uctypes.struct(uctypes.addressof(data), _MTP_DEVICE_INFO_DESC, uctypes.LITTLE_ENDIAN)
         
-        # MTP vendor extension ID
-        # Use Microsoft's extension ID to better identify as a true MTP device
-        struct.pack_into("<I", data, offset, 0x00000006)  # Microsoft MTP Extension
-        offset += 4
+        # Fill in the fixed fields
+        dev_info.standard_version = 100  # Version 1.00
+        dev_info.vendor_extension_id = 0x00000006  # Microsoft MTP Extension
+        dev_info.mtp_version = 100  # Version 1.00
         
-        # MTP version
-        struct.pack_into("<H", data, offset, 100)  # Version 1.00
-        offset += 2
+        # Handle variable-length data after the fixed struct
+        offset = 8  # Start after the fixed part of the struct
         
         # MTP extensions description string - Microsoft extension
         # MTP extension strings are ASCII strings in PIMA format (8-bit length + 8-bit chars with null terminator)
         ext_string = "microsoft.com: 1.0"  # Standard Microsoft extension string
         
         # String length (8-bit, including null terminator)
-        struct.pack_into("<B", data, offset, len(ext_string) + 1)
+        data[offset] = len(ext_string) + 1
         offset += 1
         
         # String data as ASCII
         for c in ext_string:
-            struct.pack_into("<B", data, offset, ord(c))
+            data[offset] = ord(c)
             offset += 1
         
         # ASCII null terminator
-        struct.pack_into("<B", data, offset, 0)
+        data[offset] = 0
         offset += 1
         
         # Functional mode
@@ -529,8 +571,12 @@ class MTPInterface(Interface):
             _MTP_OPERATION_SEND_OBJECT_INFO,
             _MTP_OPERATION_SEND_OBJECT,
         ]
+        
+        # Number of operations
         struct.pack_into("<H", data, offset, len(operations))
         offset += 2
+        
+        # List of operation codes
         for op in operations:
             struct.pack_into("<H", data, offset, op)
             offset += 2
@@ -553,8 +599,12 @@ class MTPInterface(Interface):
             _MTP_FORMAT_TEXT,         # text files
             _MTP_FORMAT_UNDEFINED     # all other files
         ]
+        
+        # Number of formats
         struct.pack_into("<H", data, offset, len(formats))
         offset += 2
+        
+        # List of format codes
         for fmt in formats:
             struct.pack_into("<H", data, offset, fmt)
             offset += 2
@@ -618,11 +668,15 @@ class MTPInterface(Interface):
         # We only support a single storage
         self._log("GetStorageIDs: Reporting storage ID: 0x{:08x}", self._storage_id)
         
-        # Format: 4 bytes for count, 4 bytes per storage ID
-        data = bytearray(8)
+        # Create a buffer for storage IDs - 4 bytes for count, 4 bytes per storage ID
+        data = bytearray(8)  # 4 bytes for count + 4 bytes for one storage ID
         
-        # Pack count (1) followed by our storage ID
-        struct.pack_into("<II", data, 0, 1, self._storage_id)  # Count=1, ID=storage_id
+        # Create a storage IDs struct
+        storage_ids = uctypes.struct(uctypes.addressof(data), _MTP_STORAGE_IDS_DESC, uctypes.LITTLE_ENDIAN)
+        
+        # Fill the struct
+        storage_ids.count = 1  # We only support one storage
+        storage_ids.storage_ids[0] = self._storage_id
         
         # Send the storage IDs array
         self._send_data(data)
@@ -649,33 +703,22 @@ class MTPInterface(Interface):
             free_bytes = 1024 * 1024  # 1MB
             total_bytes = 4 * 1024 * 1024  # 4MB
         
-        # Prepare storage info dataset
+        # Create a buffer for storage info (fixed part is 26 bytes, plus variable-length strings)
         data = bytearray(128)
-        offset = 0
         
-        # Storage type
-        struct.pack_into("<H", data, offset, _MTP_STORAGE_FIXED_RAM)
-        offset += 2
+        # Create a storage info struct
+        storage_info = uctypes.struct(uctypes.addressof(data), _MTP_STORAGE_INFO_DESC, uctypes.LITTLE_ENDIAN)
         
-        # Filesystem type
-        struct.pack_into("<H", data, offset, 0x0002)  # Generic hierarchical
-        offset += 2
+        # Fill in the fixed fields
+        storage_info.storage_type = _MTP_STORAGE_FIXED_RAM
+        storage_info.filesystem_type = 0x0002  # Generic hierarchical
+        storage_info.access_capability = _MTP_STORAGE_READ_WRITE  # Read-write access
+        storage_info.max_capacity = total_bytes
+        storage_info.free_space = free_bytes
+        storage_info.free_space_objects = 0xFFFFFFFF  # Maximum value - unknown
         
-        # Access capability
-        struct.pack_into("<H", data, offset, _MTP_STORAGE_READ_WRITE)  # Read-write access
-        offset += 2
-        
-        # Max capacity - use 64-bit value (8 bytes)
-        struct.pack_into("<Q", data, offset, total_bytes)
-        offset += 8
-        
-        # Free space - use 64-bit value (8 bytes)
-        struct.pack_into("<Q", data, offset, free_bytes)
-        offset += 8
-        
-        # Free space in objects (unknown - use 0xFFFFFFFF)
-        struct.pack_into("<I", data, offset, 0xFFFFFFFF)  # Maximum value
-        offset += 4
+        # Handle variable-length data after the fixed struct
+        offset = 26  # Start after the fixed part
         
         # Storage description
         offset += self._write_mtp_string(data, offset, "MicroPython Flash Storage")
@@ -733,11 +776,24 @@ class MTPInterface(Interface):
                 if format_code == 0 or self._get_format_by_path(self._object_handles[handle]) == format_code:
                     handles.append(handle)
         
-        # Prepare and send the array of handles
-        data = bytearray(4 + len(handles) * 4)
-        struct.pack_into("<I", data, 0, len(handles))  # Count
+        # Create a buffer for the handles array
+        data_size = 4 + len(handles) * 4  # 4 bytes for count + 4 bytes per handle
+        data = bytearray(data_size)
+        
+        # For the _MTP_OBJECT_HANDLES_DESC, we need to dynamically adjust the array size
+        # Create a custom descriptor with the actual array size
+        obj_handles_desc = {
+            "count": (0, uctypes.UINT32),
+            "handles": (4, uctypes.ARRAY, len(handles), uctypes.UINT32)
+        }
+        
+        # Create the struct
+        obj_handles = uctypes.struct(uctypes.addressof(data), obj_handles_desc, uctypes.LITTLE_ENDIAN)
+        
+        # Fill in the data
+        obj_handles.count = len(handles)
         for i, handle in enumerate(handles):
-            struct.pack_into("<I", data, 4 + i*4, handle)
+            obj_handles.handles[i] = handle
         
         self._send_data(data)
         self._send_response(_MTP_RESPONSE_OK)
@@ -1119,11 +1175,14 @@ class MTPInterface(Interface):
         container = bytearray(_CONTAINER_HEADER_SIZE)
         total_len = _CONTAINER_HEADER_SIZE + len(data)
         
-        struct.pack_into("<IHHI", container, 0, 
-                         total_len,                    # Container length
-                         _MTP_CONTAINER_TYPE_DATA,     # Container type
-                         self._current_operation,      # Operation code
-                         self._transaction_id)         # Transaction ID
+        # Create a container header struct
+        header = uctypes.struct(uctypes.addressof(container), _MTP_CONTAINER_HEADER_DESC, uctypes.LITTLE_ENDIAN)
+        
+        # Fill in the container header fields
+        header.length = total_len
+        header.type = _MTP_CONTAINER_TYPE_DATA
+        header.code = self._current_operation
+        header.transaction_id = self._transaction_id
         
         self._log("Sending DATA container: length={}, operation=0x{:04x}, transaction_id={}{}",
             total_len, self._current_operation, self._transaction_id, 
@@ -1186,17 +1245,22 @@ class MTPInterface(Interface):
         self._log("Sending RESPONSE: {} (0x{:04x}), transaction_id={}, params={}",
             response_name, response_code, self._transaction_id, params if params else "None")
         
-        # Create and fill container header
+        # Create container buffer for header + params
         container = bytearray(total_len)
-        struct.pack_into("<IHHI", container, 0,
-                         total_len,                    # Container length
-                         _MTP_CONTAINER_TYPE_RESPONSE, # Container type
-                         response_code,                # Response code
-                         self._transaction_id)         # Transaction ID
+        
+        # Create a container header struct
+        header = uctypes.struct(uctypes.addressof(container), _MTP_CONTAINER_HEADER_DESC, uctypes.LITTLE_ENDIAN)
+        
+        # Fill in the container header fields
+        header.length = total_len
+        header.type = _MTP_CONTAINER_TYPE_RESPONSE
+        header.code = response_code
+        header.transaction_id = self._transaction_id
         
         # Add parameters if any
         if params:
             for i, param in enumerate(params):
+                # Pack parameters directly after header
                 struct.pack_into("<I", container, _CONTAINER_HEADER_SIZE + i * 4, param)
         
         # Send the response
