@@ -124,41 +124,41 @@ _CONTAINER_HEADER_SIZE = const(12)
 # MTP struct definitions using uctypes
 # Container header struct
 _MTP_CONTAINER_HEADER_DESC = {
-    "length": (0, uctypes.UINT32),
-    "type": (4, uctypes.UINT16),
-    "code": (6, uctypes.UINT16),
-    "transaction_id": (8, uctypes.UINT32)
+    "length": 0 | uctypes.UINT32,
+    "type": 4 | uctypes.UINT16,
+    "code": 6 | uctypes.UINT16,
+    "transaction_id": 8 | uctypes.UINT32
 }
 
 # Device Info struct
 _MTP_DEVICE_INFO_DESC = {
-    "standard_version": (0, uctypes.UINT16),
-    "vendor_extension_id": (2, uctypes.UINT32),
-    "mtp_version": (6, uctypes.UINT16),
+    "standard_version": 0 | uctypes.UINT16,
+    "vendor_extension_id": 2 | uctypes.UINT32,
+    "mtp_version": 6 | uctypes.UINT16,
     # Variable length data follows: extension string, operations, events, etc.
 }
 
 # Storage IDs struct
 _MTP_STORAGE_IDS_DESC = {
-    "count": (0, uctypes.UINT32),
-    "storage_ids": (4, uctypes.ARRAY, 1, uctypes.UINT32)  # Variable length array
+    "count": 0 | uctypes.UINT32,
+    "storage_ids": (4 | uctypes.ARRAY, 1 | uctypes.UINT32)  # Variable length array
 }
 
 # Storage Info struct
 _MTP_STORAGE_INFO_DESC = {
-    "storage_type": (0, uctypes.UINT16),
-    "filesystem_type": (2, uctypes.UINT16),
-    "access_capability": (4, uctypes.UINT16),
-    "max_capacity": (6, uctypes.UINT64),
-    "free_space": (14, uctypes.UINT64),
-    "free_space_objects": (22, uctypes.UINT32)
+    "storage_type": 0 | uctypes.UINT16,
+    "filesystem_type": 2 | uctypes.UINT16,
+    "access_capability": 4 | uctypes.UINT16,
+    "max_capacity": 6 | uctypes.UINT64,
+    "free_space": 14 | uctypes.UINT64,
+    "free_space_objects": 22 | uctypes.UINT32
     # Variable length data follows: storage_description, volume_identifier
 }
 
 # Object Handles struct
 _MTP_OBJECT_HANDLES_DESC = {
-    "count": (0, uctypes.UINT32),
-    "handles": (4, uctypes.ARRAY, 1, uctypes.UINT32)  # Variable length array
+    "count": 0 | uctypes.UINT32,
+    "handles": (4 | uctypes.ARRAY, 1 | uctypes.UINT32)  # Variable length array
 }
 
 
@@ -783,8 +783,8 @@ class MTPInterface(Interface):
         # For the _MTP_OBJECT_HANDLES_DESC, we need to dynamically adjust the array size
         # Create a custom descriptor with the actual array size
         obj_handles_desc = {
-            "count": (0, uctypes.UINT32),
-            "handles": (4, uctypes.ARRAY, len(handles), uctypes.UINT32)
+            "count": 0 | uctypes.UINT32,
+            "handles": (4 | uctypes.ARRAY, len(handles) | uctypes.UINT32)
         }
         
         # Create the struct
