@@ -616,8 +616,15 @@ class MTPInterface(Interface):
     def _cmd_get_storage_ids(self):
         """Handle GetStorageIDs command."""
         # We only support a single storage
-        data = bytearray(12)
+        self._log("GetStorageIDs: Reporting storage ID: 0x{:08x}", self._storage_id)
+        
+        # Format: 4 bytes for count, 4 bytes per storage ID
+        data = bytearray(8)
+        
+        # Pack count (1) followed by our storage ID
         struct.pack_into("<II", data, 0, 1, self._storage_id)  # Count=1, ID=storage_id
+        
+        # Send the storage IDs array
         self._send_data(data)
         self._send_response(_MTP_RESPONSE_OK)
     
@@ -655,19 +662,19 @@ class MTPInterface(Interface):
         offset += 2
         
         # Access capability
-        struct.pack_into("<H", data, offset, _MTP_STORAGE_READ_WRITE)
+        struct.pack_into("<H", data, offset, _MTP_STORAGE_READ_WRITE)  # Read-write access
         offset += 2
         
-        # Max capacity
+        # Max capacity - use 64-bit value (8 bytes)
         struct.pack_into("<Q", data, offset, total_bytes)
         offset += 8
         
-        # Free space
+        # Free space - use 64-bit value (8 bytes)
         struct.pack_into("<Q", data, offset, free_bytes)
         offset += 8
         
         # Free space in objects (unknown - use 0xFFFFFFFF)
-        struct.pack_into("<I", data, offset, 0xFFFFFFFF)
+        struct.pack_into("<I", data, offset, 0xFFFFFFFF)  # Maximum value
         offset += 4
         
         # Storage description
@@ -1322,7 +1329,9 @@ class MTPInterface(Interface):
         offset += 2
         
         # String data (each character as 16-bit Unicode)
+        # Use little-endian UTF-16 encoding with BOM (Byte Order Mark)
         for c in string:
+            # Little-endian format (LE) - character code in first byte, 0 in second byte
             struct.pack_into("<H", buffer, offset, ord(c))
             offset += 2
             
