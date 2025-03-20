@@ -7,6 +7,7 @@ import os
 import io
 import errno
 import uctypes
+import shutil
 
 from .core import Interface, Buffer, split_bmRequestType
 
@@ -963,7 +964,7 @@ class MTPInterface(Interface):
                 
                 # Now send the file data in chunks
                 bytes_sent = 0
-                chunk_size = min(4096, self._tx.max_write())  # Adjust chunk size based on buffer capacity
+                chunk_size = min(4096, self._tx.writable())  # Adjust chunk size based on buffer capacity
                 
                 while bytes_sent < filesize:
                     # Wait until we can write to the TX buffer
@@ -1026,15 +1027,7 @@ class MTPInterface(Interface):
             is_dir = stat[0] & 0x4000  # S_IFDIR
             
             if is_dir:
-                # Only delete empty directories
-                try:
-                    os.rmdir(filepath)
-                except OSError as e:
-                    if e.errno == errno.ENOTEMPTY:
-                        self._send_response(_MTP_RESPONSE_PARTIAL_DELETION)
-                        return
-                    else:
-                        raise
+                shutil.rmtree(filepath)
             else:
                 # Delete the file
                 os.remove(filepath)

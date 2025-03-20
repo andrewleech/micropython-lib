@@ -15,3 +15,4 @@ package(
 )
 
 requires("usb-device")
+requires("shutil")
