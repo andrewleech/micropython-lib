@@ -118,8 +118,8 @@ _MTP_STORAGE_READ_ONLY_WITH_DELETE = const(0x0002)
 # Maximum sizes and buffers
 # _MAX_PACKET_SIZE = const(512)
 _MAX_PACKET_SIZE = const(64)
-_DEFAULT_TX_BUF_SIZE = const(4096)
-_DEFAULT_RX_BUF_SIZE = const(4096)
+_DEFAULT_TX_BUF_SIZE = const(1024)
+_DEFAULT_RX_BUF_SIZE = const(1024)
 _CONTAINER_HEADER_SIZE = const(12)
 
 # MTP struct definitions using uctypes
@@ -310,13 +310,15 @@ class MTPInterface(Interface):
             self._log("OUT transfer failed with error {}", res)
         self._rx_xfer()  # Continue receiving
     
-    def _tx_xfer(self):
+    def _tx_xfer(self, quiet=False):
         """Submit a new transfer to send data to the host."""
         if self.is_open() and not self.xfer_pending(self.ep_in) and self._tx.readable():
             buf = self._tx.pend_read()
             self._log("Submitting IN transfer, data size={}", len(buf))
             self.submit_xfer(self.ep_in, buf, self._tx_cb)
         else:
+            if quiet:
+                return
             if not self.is_open():
                 self._log("Cannot submit IN transfer - interface not open")
             elif self.xfer_pending(self.ep_in):
@@ -960,19 +962,29 @@ class MTPInterface(Interface):
                 
                 # Write header to TX buffer
                 self._tx.write(container)
+                print(f'readable: {self._tx.readable()}')
+                if self.is_open() and self.xfer_pending(self.ep_in):
+                    time.sleep_ms(11)
+
                 self._tx_xfer()
+                print(f'container passed')
+                if self.is_open() and self.xfer_pending(self.ep_in):
+                    time.sleep_ms(12)
+                
                 
                 # Now send the file data in chunks
                 bytes_sent = 0
-                chunk_size = min(4096, self._tx.writable())  # Adjust chunk size based on buffer capacity
+                chunk_size = min(_DEFAULT_TX_BUF_SIZE, len(self._tx._b))
                 
                 while bytes_sent < filesize:
                     # Wait until we can write to the TX buffer
-                    while not self._tx.writable() or self._tx.writable() < chunk_size:
+                    while not self._tx.writable(): # or self._tx.writable() < chunk_size:
                         if not self.is_open():
                             self._log("Interface closed during file transfer")
                             return
-                        time.sleep_ms(1)
+                        
+                        time.sleep_ms(10)
+                        self._tx_xfer(quiet=True)
                     
                     # Read a chunk from the file
                     remaining = filesize - bytes_sent
@@ -992,7 +1004,7 @@ class MTPInterface(Interface):
                         self._tx_xfer()
                     
                     # Progress indicator for large files
-                    if filesize > 100000 and bytes_sent % 100000 < chunk_size:
+                    if filesize > 10_000 and bytes_sent % 10_000 < chunk_size:
                         self._log("File transfer progress: {:.1f}%", (bytes_sent * 100.0) / filesize)
                 
                 # Ensure final data is sent
