@@ -4,6 +4,7 @@
 import sys
 import ffi
 import uctypes
+import os
 
 if sys.maxsize >> 32:
     UINTPTR_SIZE = 8
@@ -70,7 +71,21 @@ libusb_interface_descriptor = {
     "extra_length": (_align_word(9) + 2 * UINTPTR_SIZE) | uctypes.INT,
 }
 
-libusb = ffi.open("libusb-1.0.so")
+# Platform-aware library loading
+if sys.platform == "win32":
+    # Try module directory first (bundled DLL), then system PATH
+    try:
+        _module_dir = os.path.dirname(__file__)
+    except NameError:
+        _module_dir = "."
+    _dll_path = os.path.join(_module_dir, "libusb-1.0.dll")
+    if os.path.exists(_dll_path):
+        libusb = ffi.open(_dll_path)
+    else:
+        libusb = ffi.open("libusb-1.0.dll")
+else:
+    libusb = ffi.open("libusb-1.0.so")
+
 libusb_init = libusb.func("i", "libusb_init", "p")
 libusb_exit = libusb.func("v", "libusb_exit", "p")
 libusb_get_device_list = libusb.func("i", "libusb_get_device_list", "pp")  # return is ssize_t
@@ -81,6 +96,11 @@ libusb_free_config_descriptor = libusb.func("v", "libusb_free_config_descriptor"
 libusb_open = libusb.func("i", "libusb_open", "pp")
 libusb_set_configuration = libusb.func("i", "libusb_set_configuration", "pi")
 libusb_claim_interface = libusb.func("i", "libusb_claim_interface", "pi")
+libusb_release_interface = libusb.func("i", "libusb_release_interface", "pi")
+libusb_close = libusb.func("v", "libusb_close", "p")
+libusb_get_bus_number = libusb.func("B", "libusb_get_bus_number", "p")
+libusb_get_device_address = libusb.func("B", "libusb_get_device_address", "p")
+libusb_ref_device = libusb.func("p", "libusb_ref_device", "p")
 libusb_control_transfer = libusb.func("i", "libusb_control_transfer", "pBBHHpHI")
 
 
@@ -93,8 +113,11 @@ def _new(sdesc):
 class Interface:
     def __init__(self, descr):
         # Public attributes.
+        self.bInterfaceNumber = descr.bInterfaceNumber
+        self.bAlternateSetting = descr.bAlternateSetting
         self.bInterfaceClass = descr.bInterfaceClass
         self.bInterfaceSubClass = descr.bInterfaceSubClass
+        self.bInterfaceProtocol = descr.bInterfaceProtocol
         self.iInterface = descr.iInterface
         self.extra_descriptors = uctypes.bytes_at(descr.extra, descr.extra_length)
 
@@ -135,6 +158,20 @@ class Configuration:
     def __iter__(self):
         return iter(self._itfs)
 
+    def __getitem__(self, key):
+        """Get interface by index or (interface_number, alt_setting) tuple."""
+        if isinstance(key, tuple):
+            intf_num, alt_setting = key
+            for itf in self._itfs:
+                if itf.bInterfaceNumber == intf_num and itf.bAlternateSetting == alt_setting:
+                    return itf
+            raise KeyError(key)
+        return self._itfs[key]
+
+    def interfaces(self):
+        """Return an iterator over all interfaces in this configuration."""
+        return iter(self._itfs)
+
 
 class Device:
     _TIMEOUT_DEFAULT = 1000
@@ -148,6 +185,8 @@ class Device:
         # Public attributes.
         self.idVendor = descr.idVendor
         self.idProduct = descr.idProduct
+        self.bus = libusb_get_bus_number(dev)
+        self.address = libusb_get_device_address(dev)
 
     def __iter__(self):
         for i in range(self._num_cfg):
@@ -155,6 +194,10 @@ class Device:
 
     def __getitem__(self, i):
         return Configuration(self, i)
+
+    def configurations(self):
+        """Return an iterator over all device configurations."""
+        return iter(self)
 
     def _open(self):
         if self._handle is None:
@@ -208,6 +251,15 @@ class Device:
         else:
             return ret
 
+    def _dispose(self):
+        """Release all resources associated with this device."""
+        if self._handle is not None:
+            for itf in self._claim_itf:
+                libusb_release_interface(self._handle, itf)
+            self._claim_itf.clear()
+            libusb_close(self._handle)
+            self._handle = None
+
 
 def find(*, find_all=False, custom_match=None, idVendor=None, idProduct=None):
     if libusb_init(0) < 0:
@@ -228,12 +280,18 @@ def find(*, find_all=False, custom_match=None, idVendor=None, idProduct=None):
             continue
         if idProduct and descr.idProduct != idProduct:
             continue
+        # Ref device before creating Device object (Device stores the pointer)
+        libusb_ref_device(dev_array[i])
         device = Device(dev_array[i], descr)
         if custom_match and not custom_match(device):
             continue
         if not find_all:
+            # Free the device list (unref all devices; our device is safe because we ref'd it)
+            libusb_free_device_list(devs[0], 1)
             return device
         if not devices:
             devices = []
         devices.append(device)
+    # Free the device list (unref all devices; kept devices are safe because we ref'd them)
+    libusb_free_device_list(devs[0], 1)
     return devices

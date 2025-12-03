@@ -14,3 +14,8 @@ def get_string(device, index):
     for i in range(2, bs[0] & 0xFE, 2):
         s += chr(bs[i] | bs[i + 1] << 8)
     return s
+
+
+def dispose_resources(device):
+    """Release resources associated with the device."""
+    device._dispose()
