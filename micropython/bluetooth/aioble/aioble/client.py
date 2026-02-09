@@ -9,7 +9,7 @@ import struct
 import bluetooth
 
 from .core import ble, GattError, register_irq_handler
-from .device import DeviceConnection
+from .device import DeviceConnection, DeviceDisconnectedError
 
 
 _IRQ_GATTC_SERVICE_RESULT = const(9)
@@ -80,6 +80,11 @@ def _client_irq(event, data):
 
 
 register_irq_handler(_client_irq, None)
+
+
+def _check_conn(connection):
+    if connection._conn_handle is None:
+        raise DeviceDisconnectedError
 
 
 # Async generator for discovering services, characteristics, descriptors.
@@ -190,6 +195,7 @@ class ClientService:
 
     # For ClientDiscover
     def _start_discovery(connection, uuid=None):
+        _check_conn(connection)
         ble.gattc_discover_services(connection._conn_handle, uuid)
 
 
@@ -248,6 +254,7 @@ class BaseClientCharacteristic:
         self._read_event = self._read_event or asyncio.ThreadSafeFlag()
 
         # Issue the read.
+        _check_conn(self._connection())
         ble.gattc_read(self._connection()._conn_handle, self._value_handle)
 
         with self._connection().timeout(timeout_ms):
@@ -285,6 +292,7 @@ class BaseClientCharacteristic:
             self._write_event = self._write_event or asyncio.ThreadSafeFlag()
 
         # Issue the write.
+        _check_conn(self._connection())
         ble.gattc_write(self._connection()._conn_handle, self._value_handle, data, response)
 
         if response:
@@ -353,6 +361,7 @@ class ClientCharacteristic(BaseClientCharacteristic):
 
     # For ClientDiscover
     def _start_discovery(service, uuid=None):
+        _check_conn(service.connection)
         ble.gattc_discover_characteristics(
             service.connection._conn_handle,
             service._start_handle,
@@ -449,6 +458,7 @@ class ClientDescriptor(BaseClientCharacteristic):
 
     # For ClientDiscover
     def _start_discovery(characteristic, uuid=None):
+        _check_conn(characteristic._connection())
         ble.gattc_discover_descriptors(
             characteristic._connection()._conn_handle,
             characteristic._value_handle,
