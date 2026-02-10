@@ -239,8 +239,8 @@ class scan:
         # values, but we need to stop any previous scan first via awaiting
         # _cancel_pending(), but __init__ isn't async.
         self._duration_ms = duration_ms
-        self._interval_us = interval_us or 1280000
-        self._window_us = window_us or 11250
+        self._interval_us = interval_us or 30000
+        self._window_us = window_us or 30000
         self._active = active
 
     async def __aenter__(self):
