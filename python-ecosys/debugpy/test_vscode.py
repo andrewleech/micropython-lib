@@ -30,7 +30,7 @@ def debuggable_code():
     numbers = [3, 4, 5]
     for i, num in enumerate(numbers):
         print(f"Calculating fibonacci({num})...")
-        result = fibonacci(num)  # <-- SET BREAKPOINT HERE (line 26)
+        result = fibonacci(num)  # <-- SET BREAKPOINT HERE
         foo += result  # Modify foo to see if it gets traced
         print(f"fibonacci({num}) = {result}")
         print(sys.implementation)
@@ -52,24 +52,18 @@ def main():
 
     # Start debug server
     try:
-        debugpy.listen()
-        print("Debug server attached on 127.0.0.1:5678")
-        print("Connecting back to VS Code debugger now...")
-        # print("Set a breakpoint on line 26: 'result = fibonacci(num)'")
-        # print("Press Enter to continue after connecting debugger...")
-        # try:
-        #     input()
-        # except:
-        #     pass
+        host, port = debugpy.listen()
+        print("Debug server listening on {}:{}".format(host, port))
+        print("Attach a DAP client now; this will wait for it.")
 
         # Enable debugging for this thread
         debugpy.debug_this_thread()
 
-        # Give VS Code a moment to set breakpoints after attach
-        print("\nGiving VS Code time to set breakpoints...")
-        import time
-
-        time.sleep(2)
+        # Block until the client has attached and sent configurationDone, so
+        # breakpoints it set are already in place when the traced code runs.
+        # A sleep here would be a race the client usually loses.
+        if not debugpy.wait_for_client():
+            print("No client configured a session; running untraced.")
 
         # Call the debuggable code function so it gets traced
         debuggable_code()
