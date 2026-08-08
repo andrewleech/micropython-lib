@@ -112,7 +112,8 @@ class DebugSession:
         self.debug_logging = False  # Initialize first
         self.channel = JsonMessageChannel(client_socket, self._debug_print)
         self.pdb = PdbAdapter()
-        self.pdb._debug_session = self  # Allow PDB to process messages during wait # type: ignore[assignment]
+        # Lets the adapter pump DAP messages while it waits.
+        self.pdb._debug_session = self  # type: ignore[assignment]
         self.initialized = False
         self.connected = True
         self.thread_id = 1  # Simple single-thread model
@@ -630,9 +631,7 @@ class DebugSession:
         self.channel.send_response(CMD_RESTART, seq)
         # The client last heard `stopped`; without this its UI stays stopped on
         # a frame that is about to cease to exist.
-        self.channel.send_event(
-            EVENT_CONTINUED, threadId=self.thread_id, allThreadsContinued=True
-        )
+        self.channel.send_event(EVENT_CONTINUED, threadId=self.thread_id, allThreadsContinued=True)
 
     def _raise_if_restarting(self):
         """Unwind the target if a restart arrived, clearing the request.
@@ -643,7 +642,7 @@ class DebugSession:
         """
         if self.restart_requested:
             self.restart_requested = False
-            raise RestartRequest()
+            raise RestartRequest
 
     def console(self, text):
         """Show `text` in the client's debug console (a DAP `output` event).

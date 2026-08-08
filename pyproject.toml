@@ -109,3 +109,8 @@ max-statements = 166
 
 # ble multitests are evaluated with some names pre-defined
 "micropython/bluetooth/aioble/multitests/*" = ["F821"]
+
+# flake8-debugger exists to catch a stray debugger import left in shipped code.
+# Inside the debugger's own package - and in the samples that demonstrate it -
+# every hit is that import on purpose.
+"python-ecosys/debugpy/**" = ["T100"]
