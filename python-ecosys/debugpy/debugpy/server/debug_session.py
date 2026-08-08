@@ -460,9 +460,9 @@ class DebugSession:
             f"[DAP] Debug logging {'enabled' if self.debug_logging else 'disabled'} (logToFile={self.debug_logging})"
         )
 
-        # get debugger root and debugee root from pathMappings
+        # get debugger root and debuggee root from pathMappings
         for pm in args.get("pathMappings", []):
-            # debugee - debugger. Trailing slashes are stripped so "/remote"
+            # debuggee - debugger. Trailing slashes are stripped so "/remote"
             # and "/remote/" name the same root: pdb_adapter's translation
             # matches a mapping on a path-separator boundary it adds itself,
             # and a root that already carries one would double it up.
@@ -706,8 +706,8 @@ class DebugSession:
         source_path = source.get("path", "")
         if self._baremetal or not source_path:
             # BUG: unable to read the source on ESP32
-            # Possible an effect of the import / inialization sequence ?
-            # Nothe that other source files ( other.py) do not seem to get requested in the same way
+            # Possible an effect of the import / initialization sequence ?
+            # Note that other source files ( other.py) do not seem to get requested in the same way
             self.channel.send_response(CMD_SOURCE, seq, success=False)
             return
         self._debug_print(f"[DAP] Processing source request for path: {source}")
