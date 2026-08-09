@@ -3,6 +3,24 @@
 For working on this module: how to see the DAP conversation, and what a healthy
 one looks like.
 
+## Starting a session
+
+Nothing in the program being debugged talks to the debugger. The server is
+started around it: `listen()`, then `wait_for_client()`, and only then is the
+program imported and run, so the breakpoints the client sent are already in
+place when its first line executes. `mpremote debug` does that with a boot
+script; by hand, on the unix port, the same sequence is:
+
+```bash
+<path-to>/micropython -c "import debugpy; debugpy.listen(); \
+    debugpy.wait_for_client(); debugpy.debug_this_thread(); \
+    import test_vscode; test_vscode.main()"
+```
+
+`test_vscode.py` is a sample program with no debugpy import and no manual
+breakpoint in it. `wait_for_client()` blocks until a client has attached and
+sent `configurationDone`, so there is no race to connect and no sleep to tune.
+
 ## Method 1: `--dap-log` (recommended)
 
 If you start sessions with `mpremote debug`, pass `--dap-log`. It interposes a
@@ -20,14 +38,9 @@ alternate launch configuration.
 
 ## Method 2: the server's own logging
 
-Run the debuggee directly and read the server's own trace from its output:
-
-```bash
-<path-to>/micropython test_vscode.py
-```
-
-The script waits for a client, so there is no race to attach. Connect to
-`127.0.0.1:5678` with `"logToFile": true` in the configuration - that flag, read
+Start a session by hand, as above, and read the server's own trace from its
+output. Connect to `127.0.0.1:5678` with `"logToFile": true` in the
+configuration - that flag, read
 from the `attach` request, is what turns on the per-message trace, so without it
 you get only the handful of unconditional `[DAP]` progress lines
 (`vscode_launch_example.json` sets it). From then on each message is printed as
