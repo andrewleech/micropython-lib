@@ -83,7 +83,7 @@ class _Device:
     def __init__(self):
         self._itfs = {}  # Mapping from interface number to interface object, set by init()
         self._eps = {}  # Mapping from endpoint address to interface object, set by _open_cb()
-        self._ep_cbs = {}  # Mapping from endpoint address to Optional[xfer callback]
+        self._ep_cbs = {}  # Mapping from endpoint address to list of pending xfer callbacks
         self._cb_thread = None  # Thread currently running endpoint callback
         self._cb_ep = None  # Endpoint number currently running callback
         self._usbd = machine.USBDevice()  # low-level API
@@ -276,7 +276,7 @@ class _Device:
             if dt == _STD_DESC_ENDPOINT_TYPE:
                 ep_addr = desc[offs + _DESC_OFFSET_ENDPOINT_NUM]
                 self._eps[ep_addr] = itf
-                self._ep_cbs[ep_addr] = None
+                self._ep_cbs[ep_addr] = []
             elif dt == _STD_DESC_INTERFACE_TYPE:
                 max_itf = max(max_itf, desc[offs + _DESC_OFFSET_INTERFACE_NUM])
             offs += dl
@@ -309,29 +309,50 @@ class _Device:
         # that function for documentation about the possible parameter values.
         if ep_addr not in self._eps:
             raise ValueError("ep_addr")
-        if self._xfer_pending(ep_addr):
-            raise RuntimeError("xfer_pending")
+
+        cbs = self._ep_cbs[ep_addr]
 
         # USBDevice callback may be called immediately, before Python execution
-        # continues, so set it first.
+        # continues, so record the callback first. Completions arrive in
+        # submission order, so this list is a FIFO and the entry appended here
+        # is the one belonging to this transfer.
         #
-        # To allow xfer_pending checks to work, store True instead of None.
-        self._ep_cbs[ep_addr] = done_cb or True
-        return self._usbd.submit_xfer(ep_addr, data)
+        # True is stored instead of None so a transfer with no callback still
+        # counts as outstanding.
+        cbs.append(done_cb or True)
+        try:
+            result = self._usbd.submit_xfer(ep_addr, data)
+        except BaseException:
+            # Nothing was queued. A completion for an earlier transfer may have
+            # run in the meantime, but that pops from the front, so the entry
+            # appended above is still the last one.
+            cbs.pop()
+            raise
+        if not result:
+            cbs.pop()
+        return result
 
     def _xfer_pending(self, ep_addr):
-        # Returns True if a transfer is pending on this endpoint.
+        # Returns True if any transfer is outstanding on this endpoint.
         #
         # Generally, drivers should call Interface.xfer_pending() instead. See that
         # function for more documentation.
-        return self._ep_cbs[ep_addr] or (self._cb_ep == ep_addr and self._cb_thread != get_ident())
+        return bool(self._ep_cbs[ep_addr]) or (
+            self._cb_ep == ep_addr and self._cb_thread != get_ident()
+        )
+
+    def _xfer_queued(self, ep_addr):
+        # Returns how many transfers are outstanding on this endpoint.
+        #
+        # Generally, drivers should call Interface.xfer_queued() instead.
+        return len(self._ep_cbs.get(ep_addr, ()))
 
     def _xfer_cb(self, ep_addr, result, xferred_bytes):
         # Callback from TinyUSB lower layer when a transfer completes.
-        cb = self._ep_cbs.get(ep_addr, None)
+        cbs = self._ep_cbs.get(ep_addr, None)
+        cb = cbs.pop(0) if cbs else None
         self._cb_thread = get_ident()
         self._cb_ep = ep_addr  # Track while callback is running
-        self._ep_cbs[ep_addr] = None
 
         # In most cases, 'cb' is a callback function for the transfer. Can also be:
         # - True (for a transfer with no callback)
@@ -553,15 +574,26 @@ class Interface:
         return False
 
     def xfer_pending(self, ep_addr):
-        # Return True if a transfer is already pending on ep_addr.
+        # Return True if any transfer is outstanding on ep_addr.
         #
-        # Only one transfer can be submitted at a time.
+        # A transfer counts as outstanding while a completion callback is
+        # running for that endpoint, unless this function is called from the
+        # callback itself. This makes it simple to submit a new transfer from
+        # the completion callback.
         #
-        # The transfer is marked pending while a completion callback is running
-        # for that endpoint, unless this function is called from the callback
-        # itself. This makes it simple to submit a new transfer from the
-        # completion callback.
+        # An endpoint may accept more than one transfer at a time, so this
+        # answers "is anything in flight", not "is there room to submit".
+        # Drivers that keep several transfers queued should use xfer_queued().
         return _dev and _dev._xfer_pending(ep_addr)
+
+    def xfer_queued(self, ep_addr):
+        # Return how many transfers are outstanding on ep_addr.
+        #
+        # Submitting more than one keeps the endpoint busy while the driver is
+        # preparing the next buffer, rather than leaving it idle until then.
+        # How many the lower layer accepts depends on the port; submit_xfer()
+        # raises OSError EBUSY once it will take no more.
+        return _dev._xfer_queued(ep_addr) if _dev else 0
 
     def submit_xfer(self, ep_addr, data, done_cb=None):
         # Submit a USB transfer (of any type except control)
@@ -570,10 +602,12 @@ class Interface:
         #
         # - ep_addr. Address of the endpoint to submit the transfer on. Caller is
         #   responsible for ensuring that ep_addr is correct and belongs to this
-        #   interface. Only one transfer can be active at a time on each endpoint.
+        #   interface.
         #
         # - data. Buffer containing data to send, or for data to be read into
-        #   (depending on endpoint direction).
+        #   (depending on endpoint direction). The buffer must stay untouched
+        #   until the transfer completes, so a driver queueing more than one
+        #   transfer at a time needs a separate buffer for each.
         #
         # - done_cb. Optional callback function for when the transfer completes.
         # The callback is called with arguments (ep_addr, result, xferred_bytes)
@@ -587,10 +621,10 @@ class Interface:
         # - The interface is not "open" (i.e. has not been enumerated and configured
         #   by the host yet.)
         #
-        # - A transfer is already pending on this endpoint (use xfer_pending() to check
-        #   before sending if needed.)
-        #
         # - A DCD error occurred when queueing the transfer on the hardware.
+        #
+        # Raises OSError EBUSY if the endpoint will accept no further transfers
+        # until one of those outstanding completes.
         #
         #
         # Will raise TypeError if 'data' isn't he correct type of buffer for the

@@ -75,6 +75,10 @@ _CDC_ITF_DATA_PROT = const(0)  # no protocol
 # Length of the bulk transfer endpoints. Maybe should be configurable?
 _BULK_EP_LEN = const(64)
 
+# Data OUT transfers to keep outstanding. Two is enough to leave the endpoint
+# armed while the previous transfer's bytes are copied into the receive buffer.
+_OUT_XFER_QUEUE = const(2)
+
 # MicroPython error constants (negated as IOBase.ioctl uses negative return values for error codes)
 # these must match values in py/mperrno.h
 _MP_EINVAL = const(-22)
@@ -146,6 +150,21 @@ class CDCInterface(io.IOBase, Interface):
         self._timeout = timeout
         self._wb = Buffer(txbuf)
         self._rb = Buffer(rxbuf)
+
+        # Data OUT is submitted from these fixed size buffers rather than
+        # directly into _rb, so more than one transfer can be outstanding at a
+        # time. Buffer hands out one pending write region at a time and shuffles
+        # its contents when a read finishes, so a second transfer submitted
+        # straight into it would overlap the first. Copying out of a slot in the
+        # completion callback costs a memcpy of at most _BULK_EP_LEN and keeps
+        # the endpoint busy while that copy happens.
+        #
+        # Data IN still submits a slice of _wb directly. Those transfers are
+        # whatever length is waiting to send, so slots would have to be as large
+        # as _wb to avoid splitting a write into several transfers, and each
+        # transfer costs far more than the bytes it carries.
+        self._rd_slots = [bytearray(_BULK_EP_LEN) for _ in range(_OUT_XFER_QUEUE)]
+        self._rd_done = 0  # count of data OUT transfers completed, mod nothing
 
     ###
     ### Line State & Line Coding State property getters
@@ -274,6 +293,13 @@ class CDCInterface(io.IOBase, Interface):
     def num_eps(self):
         return 2  # total after masking out _EP_IN_FLAG
 
+    def on_reset(self):
+        super().on_reset()
+        # A reset discards whatever was outstanding and those completions will
+        # not arrive. The lower layer forgets them too, so the slot rotation
+        # only needs putting back to a known point.
+        self._rd_done = 0
+
     def on_open(self):
         super().on_open()
         # kick off any transfers that may have queued while the device was not open
@@ -324,21 +350,45 @@ class CDCInterface(io.IOBase, Interface):
         self._wr_xfer()
 
     def _rd_xfer(self):
-        # Keep an active data OUT transfer to read data from the host,
-        # whenever the receive buffer has room for new data
-        if (
-            self.is_open()
-            and not self.xfer_pending(self.ep_d_out)
-            and self._rb.writable() >= _BULK_EP_LEN
-        ):
-            # Can only submit up to the endpoint length per transaction, otherwise we won't
-            # get any transfer callback until the full transaction completes.
-            self.submit_xfer(self.ep_d_out, self._rb.pend_write(_BULK_EP_LEN), self._rd_cb)
+        # Keep data OUT transfers outstanding to read data from the host, as
+        # many as the endpoint will take, while the receive buffer has room for
+        # what they might return.
+        #
+        # Only up to the endpoint length is submitted per transaction,
+        # otherwise there is no transfer callback until the full transaction
+        # completes.
+        #
+        # Slots are used in rotation and completions arrive in submission
+        # order, so which slot to use next follows from how many transfers have
+        # completed plus how many are still in flight. Deriving it means there
+        # is no separate free/busy bookkeeping to fall out of step with the
+        # transfers themselves, which matters because this function reenters:
+        # submit_xfer() may run a completion callback before it returns, and
+        # that callback calls back in here.
+        while self.is_open():
+            queued = self.xfer_queued(self.ep_d_out)
+            if queued >= _OUT_XFER_QUEUE:
+                return  # every slot is in flight
+            if self._rb.writable() < _BULK_EP_LEN * (queued + 1):
+                return  # no room for what another transfer might return
+            slot = self._rd_slots[(self._rd_done + queued) % _OUT_XFER_QUEUE]
+            try:
+                self.submit_xfer(self.ep_d_out, slot, self._rd_cb)
+            except OSError:
+                # The endpoint will take no more for now, which is what a lower
+                # layer without a queue reports on the second submission. A
+                # transfer already outstanding calls back here when it
+                # completes.
+                return
 
     def _rd_cb(self, ep, res, num_bytes):
-        # Whenever a data OUT transfer ends
-        if res == 0:
-            self._rb.finish_write(num_bytes)
+        # Whenever a data OUT transfer ends. Completions arrive in submission
+        # order and the completed transfer has already been accounted for by
+        # the lower layer, so the oldest unfinished slot is the one that ended.
+        slot = self._rd_slots[self._rd_done % _OUT_XFER_QUEUE]
+        self._rd_done += 1
+        if res == 0 and num_bytes:
+            self._rb.write(slot[:num_bytes])
         self._rd_xfer()
 
     ###
