@@ -3,7 +3,7 @@
 This is a repository of packages designed to be useful for writing MicroPython
 applications.
 
-The packages here fall into categories corresponding to the four top-level
+The packages here fall into categories corresponding to the top-level
 directories:
 
 * **python-stdlib**: Compatible versions of modules from [The Python Standard
@@ -25,6 +25,10 @@ directories:
 * **unix-ffi**: These packages are specifically for the MicroPython Unix port
     and provide access to operating-system and third-party libraries via FFI,
     or functionality that is not useful for non-Unix ports.
+
+* **windows-ffi**: These packages are specifically for the MicroPython
+    Windows port and provide access to operating-system libraries via FFI, on
+    a `ports/windows` build with `MICROPY_PY_FFI` enabled.
 
 ## Usage
 

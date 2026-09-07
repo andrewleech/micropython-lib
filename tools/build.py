@@ -313,8 +313,8 @@ def build(output_path, hash_prefix_len, mpy_cross_path):
     index_json["v"] = _JSON_VERSION_INDEX
     index_json["updated"] = int(time.time())
 
-    # For now, don't process unix-ffi. In the future this can be extended to
-    # allow a way to request unix-ffi packages via mip.
+    # For now, don't process unix-ffi or windows-ffi. In the future this can
+    # be extended to allow a way to request them via mip.
     lib_dirs = ["micropython", "python-stdlib", "python-ecosys"]
 
     mpy_version, _mpy_sub_version = mpy_cross.mpy_version(mpy_cross=mpy_cross_path)
