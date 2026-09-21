@@ -57,6 +57,7 @@ function ci_package_tests_run {
     export MICROPYPATH
     for test in \
         micropython/drivers/storage/sdcard/sdtest.py \
+        micropython/mpyschema/test_mpyschema.py \
         micropython/umqtt.simple/test_umqtt_simple.py \
         micropython/net/ntptime/test_ntptime.py \
         micropython/xmltok/test_xmltok.py \
