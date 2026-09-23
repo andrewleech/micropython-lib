@@ -649,10 +649,10 @@ class DebugSession:
         """Show `text` in the client's debug console (a DAP `output` event).
 
         The only route a target's own notes have to the user on a transport
-        where device stdout never reaches the host: a mounted serial session's
-        filesystem pump discards everything the device prints. Run-boundary
-        markers go through here as well as to stdout so they are visible on
-        every transport, not just the ones with a readable console.
+        where device stdout never reaches the host, such as a network target
+        whose console nobody holds once the endpoint is handed over.
+        Run-boundary markers go through here as well as to stdout so they are
+        visible on every transport, not just the ones with a readable console.
         """
         self.channel.send_event(EVENT_OUTPUT, category="console", output=text)
 
